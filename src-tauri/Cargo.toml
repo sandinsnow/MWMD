@@ -3,6 +3,7 @@ name = "wxmd"
 version = "0.1.0"
 description = "WeChat-friendly Markdown editor (local, Rust-first)"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "wxmd_lib"
