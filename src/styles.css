@@ -255,7 +255,7 @@ button { font-family: inherit; }
 .modal button.primary { border: none; border-radius: 8px; background: var(--accent); color: #fff; padding: 9px 18px; font-size: var(--ui-size); cursor: pointer; }
 .modal button.primary:hover { filter: brightness(1.05); }
 .modal-sm { width: 380px; }
-.modal-label { margin: 0 0 12px; font-size: var(--ui-size); color: var(--text-2); line-height: 1.6; }
+.modal-label { margin: 0 0 12px; font-size: var(--ui-size); color: var(--text-2); line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
 .modal-input {
   width: 100%; border: 1px solid var(--border-2); border-radius: 8px; padding: 9px 12px;
   font-size: calc(var(--ui-size) + 1px); outline: none; margin-bottom: 18px;

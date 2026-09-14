@@ -113,7 +113,7 @@ export default function App() {
       if (compareVersions(latest.version, version) > 0) {
         const go = await modal.confirm({
           title: t("updateTitle"),
-          message: t("updateFound", { v: latest.version, cur: version || "?" }),
+          message: t("updateFound", { v: latest.version, cur: version || "?", url: RELEASES_PAGE }),
           okText: t("updateOpen"),
           cancelText: t("cancel"),
         });

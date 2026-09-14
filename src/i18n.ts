@@ -131,7 +131,7 @@ const DICT: Record<string, [string, string]> = {
   updateChecking: ["正在检查更新…", "Checking for updates…"],
   updateLatest: ["已是最新版本（{v}）。", "You're up to date ({v})."],
   updateTitle: ["发现新版本", "Update available"],
-  updateFound: ["新版本 {v} 可用（当前 {cur}）。是否打开下载页？", "Version {v} is available (current {cur}). Open the download page?"],
+  updateFound: ["新版本 {v} 可用（当前 {cur}）。\n下载地址：{url}", "Version {v} is available (current {cur}).\nDownload: {url}"],
   updateOpen: ["打开下载页", "Open download page"],
   updateFail: ["检查更新失败，请稍后重试或确认网络连接。", "Update check failed. Try again later or check your network."],
   saved: ["已保存", "Saved"],
