@@ -77,6 +77,9 @@ export default function App() {
   const [version, setVersion] = useState("");
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
+  // 联动滚动：编辑器滚动容器（由 Editor 写入 CodeMirror 的 .cm-scroller）与预览滚动容器（.preview）。
+  const editorScrollRef = useRef<HTMLElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
   const win = getCurrentWindow();
   const modal = useModal();
   const t = useCallback((k: string, vars?: Record<string, string | number>) => tr(lang, k, vars), [lang]);
@@ -539,6 +542,44 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(id); };
   }, [searchMode, query, workspaces]);
 
+  // 编辑器 ⇄ 预览联动滚动：以「最后被用户操作的面板」为主面板，按比例镜像滚动到另一侧，
+  // 忽略非主面板的 scroll 事件（程序化滚动回波），避免反馈循环抖动。
+  useEffect(() => {
+    const ed = editorScrollRef.current;
+    const pv = previewScrollRef.current;
+    if (!ed || !pv) return;
+    let master: "ed" | "pv" | null = null;
+    const mirror = (src: HTMLElement, dst: HTMLElement) => {
+      const sDen = src.scrollHeight - src.clientHeight;
+      const dDen = dst.scrollHeight - dst.clientHeight;
+      if (sDen <= 0 || dDen <= 0) return;
+      dst.scrollTop = (src.scrollTop / sDen) * dDen;
+    };
+    const setEd = () => { master = "ed"; };
+    const setPv = () => { master = "pv"; };
+    const onEdScroll = () => { if (master === "ed") mirror(ed, pv); };
+    const onPvScroll = () => { if (master === "pv") mirror(pv, ed); };
+    ed.addEventListener("scroll", onEdScroll, { passive: true });
+    pv.addEventListener("scroll", onPvScroll, { passive: true });
+    const intents: [HTMLElement, () => void][] = [[ed, setEd], [pv, setPv]];
+    for (const [el, m] of intents) {
+      el.addEventListener("wheel", m, { passive: true });
+      el.addEventListener("touchstart", m, { passive: true });
+      el.addEventListener("pointerdown", m);
+      el.addEventListener("keydown", m);
+    }
+    return () => {
+      ed.removeEventListener("scroll", onEdScroll);
+      pv.removeEventListener("scroll", onPvScroll);
+      for (const [el, m] of intents) {
+        el.removeEventListener("wheel", m);
+        el.removeEventListener("touchstart", m);
+        el.removeEventListener("pointerdown", m);
+        el.removeEventListener("keydown", m);
+      }
+    };
+  }, [current, previewCollapsed]);
+
   return (
     <div className="app">
       <header className="titlebar">
@@ -688,6 +729,7 @@ export default function App() {
             onParams={changeParams}
             pickImage={pickImage}
             onChange={setMd}
+            scrollElementRef={editorScrollRef}
           />
           {previewCollapsed ? (
             <div
@@ -713,7 +755,7 @@ export default function App() {
                   <Icon name="chevronRight" size={15} />
                 </button>
               </div>
-              <div className={"preview" + (wxDark ? " wx-dark" : "")}>
+              <div ref={previewScrollRef} className={"preview" + (wxDark ? " wx-dark" : "")}>
                 <div className="pv-content" dangerouslySetInnerHTML={{ __html: previewHtml }} />
               </div>
             </div>

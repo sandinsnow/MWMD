@@ -20,6 +20,8 @@ interface Props {
   onParams: (patch: Partial<ThemeParams>) => void;
   pickImage: () => Promise<string | null>;
   onChange: (v: string) => void;
+  // 供父组件做「编辑器 ⇄ 预览」联动滚动：挂载后写入 CodeMirror 的滚动容器（.cm-scroller）。
+  scrollElementRef?: { current: HTMLElement | null };
 }
 
 const wrapSel = (v: EditorView, before: string, after: string, placeholder: string) => {
@@ -152,7 +154,7 @@ const darkTheme = EditorView.theme({
   ".cm-cursor": { borderLeftColor: "#ff8a3d" },
 });
 
-export default function Editor({ initial, lang, appearance, params, onParams, pickImage, onChange }: Props) {
+export default function Editor({ initial, lang, appearance, params, onParams, pickImage, onChange, scrollElementRef }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeComp = useRef(new Compartment());
@@ -177,9 +179,11 @@ export default function Editor({ initial, lang, appearance, params, onParams, pi
       parent: host.current!,
     });
     viewRef.current = view;
+    if (scrollElementRef) scrollElementRef.current = view.scrollDOM;
     return () => {
       view.destroy();
       viewRef.current = null;
+      if (scrollElementRef) scrollElementRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
