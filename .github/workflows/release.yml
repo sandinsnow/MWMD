@@ -1,0 +1,108 @@
+# 便携单文件 exe 发布流水线（SPEC §7）
+# 触发：推送 v* 标签（如 v0.1.0）。产物：免安装单 exe + latest.json + SHA256，发布到 GitHub Releases。
+# 本期不产出 NSIS/MSI 安装器（--no-bundle），不做代码签名（未签名）。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要构建/发布的标签（如 v0.1.0）"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # 发布产物统一命名（cargo 二进制名为 wxmd.exe，CI 重命名为 MWMD.exe）
+  APP_NAME: MWMD
+  BIN_NAME: wxmd
+  TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 便携单文件：跳过安装器打包，直接产出内嵌前端资源 + 图标的 release exe。
+      - name: Build portable exe
+        run: pnpm tauri build --no-bundle --target ${{ env.TARGET }}
+
+      - name: Stage artifacts (rename + checksum + latest.json)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${{ steps.tag.outputs.version }}"
+          SRC="src-tauri/target/${TARGET}/release/${BIN_NAME}.exe"
+          OUT="dist-release"
+          mkdir -p "$OUT"
+          cp "$SRC" "$OUT/${APP_NAME}.exe"
+
+          # SHA256（小写十六进制），用于客户端完整性校验
+          SHA=$(sha256sum "$OUT/${APP_NAME}.exe" | awk '{print $1}')
+          echo "$SHA" > "$OUT/${APP_NAME}.exe.sha256"
+
+          # 下载 URL 指向本仓库的 Release 资产
+          URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${APP_NAME}.exe"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # 用 tag 附注（若有）作为更新说明，回退为标签名
+          NOTES=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "$TAG")
+          [ -z "$NOTES" ] && NOTES="$TAG"
+
+          # 生成 latest.json（自替换更新器读取：版本比对 + 下载地址 + 校验和）
+          NOTES="$NOTES" URL="$URL" SHA="$SHA" VERSION="$VERSION" PUB_DATE="$PUB_DATE" \
+            node scripts/make-latest-json.mjs > "$OUT/latest.json"
+
+          echo "sha256=$SHA" >> "$GITHUB_ENV"
+          ls -la "$OUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ env.APP_NAME }} ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist-release/${{ env.APP_NAME }}.exe
+            dist-release/${{ env.APP_NAME }}.exe.sha256
+            dist-release/latest.json
