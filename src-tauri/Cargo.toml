@@ -1,6 +1,6 @@
 [package]
 name = "wxmd"
-version = "0.1.0"
+version = "0.1.1"
 description = "WeChat-friendly Markdown editor (local, Rust-first)"
 edition = "2021"
 license = "MIT"
