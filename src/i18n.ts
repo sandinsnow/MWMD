@@ -122,6 +122,7 @@ const DICT: Record<string, [string, string]> = {
   grpLanguage: ["界面语言", "Language"],
   editorLight: ["浅色", "Light"],
   editorDark: ["深色", "Dark"],
+  editorSystem: ["跟随系统", "Follow system"],
   menuAbout: ["关于", "About"],
   miAbout: ["关于 MWMD", "About MWMD"],
   aboutTitle: ["关于 MWMD", "About MWMD"],

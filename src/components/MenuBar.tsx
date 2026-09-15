@@ -13,7 +13,7 @@ interface Props {
   lang: Lang;
   themes: ThemeMeta[];
   theme: string;
-  editorTheme: "light" | "dark";
+  editorTheme: "light" | "dark" | "system";
   uiFont: string;
   uiSize: number;
   onNewFile: () => void;
@@ -27,7 +27,7 @@ interface Props {
   onTheme: (id: string) => void;
   onThemeEditor: () => void;
   customThemes: { id: string; name_zh: string; name_en: string }[];
-  onEditorTheme: (v: "light" | "dark") => void;
+  onEditorTheme: (v: "light" | "dark" | "system") => void;
   onUiFont: (v: string) => void;
   onUiSize: (v: number) => void;
   onLang: (l: Lang) => void;
@@ -169,6 +169,7 @@ export default function MenuBar(p: Props) {
             <GroupTitle label={t("grpEditorTheme")} />
             <Radio label={t("editorLight")} checked={p.editorTheme === "light"} onClick={() => p.onEditorTheme("light")} />
             <Radio label={t("editorDark")} checked={p.editorTheme === "dark"} onClick={() => p.onEditorTheme("dark")} />
+            <Radio label={t("editorSystem")} checked={p.editorTheme === "system"} onClick={() => p.onEditorTheme("system")} />
             <Sep />
             <GroupTitle label={t("grpLanguage")} />
             <Radio label="中文" checked={p.lang === "zh"} onClick={() => p.onLang("zh")} />

@@ -64,7 +64,10 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [lang, setLang] = useState<Lang>("zh");
   const [theme, setTheme] = useState("default");
-  const [editorTheme, setEditorTheme] = useState<"light" | "dark">("light");
+  const [editorTheme, setEditorTheme] = useState<"light" | "dark" | "system">("light");
+  // 「跟随系统」下 OS 的深浅色偏好；resolvedTheme 才是实际应用到界面/编辑器的深浅。
+  const [sysDark, setSysDark] = useState(false);
+  const resolvedTheme: "light" | "dark" = editorTheme === "system" ? (sysDark ? "dark" : "light") : editorTheme;
   const [wxDark, setWxDark] = useState(false);
   const [params, setParams] = useState<ThemeParams>(DEFAULT_PARAMS);
   const [themes, setThemes] = useState<ThemeMeta[]>([]);
@@ -167,12 +170,10 @@ export default function App() {
         if (Array.isArray(cfg.custom_themes)) setCustomThemes(cfg.custom_themes);
         setLang(langFromLocale(cfg.locale));
         if (cfg.theme) setTheme(cfg.theme);
-        if (cfg.editor_theme === "dark" || cfg.editor_theme === "light") setEditorTheme(cfg.editor_theme);
+        if (cfg.editor_theme === "dark" || cfg.editor_theme === "light" || cfg.editor_theme === "system") setEditorTheme(cfg.editor_theme);
         if (cfg.ui_font_family) setUiFont(cfg.ui_font_family);
         if (cfg.ui_font_size) setUiSize(cfg.ui_font_size);
-        // 从未持久化过则默认跟随界面外观（保留 v1.3「深色界面→深色预览」的直觉）；此后完全独立。
-        if (typeof cfg.wx_dark === "boolean") setWxDark(cfg.wx_dark);
-        else setWxDark(cfg.editor_theme === "dark");
+        // wxDark 不再从配置独立恢复：改由 resolvedTheme 派生同步（见下方 effect），保证预览深浅随主界面。
         if (cfg.params) setParams({ ...DEFAULT_PARAMS, ...cfg.params });
         getVersion().then(setVersion).catch(() => {});
         let roots = Array.isArray(cfg.workspaces) ? cfg.workspaces : [];
@@ -236,17 +237,31 @@ export default function App() {
     };
   }, [refresh]);
 
+  // 「跟随系统」：监听 OS 深浅色偏好（WebView2 的 prefers-color-scheme 跟随系统），实时更新 sysDark。
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => setSysDark(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
   // 界面字体/字号/深色 → 应用到根元素，全局 chrome 生效（文章预览用 Rust 内联样式，不受影响）
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty("--ui-font", UI_FONT_STACK[uiFont] ?? UI_FONT_STACK.sans);
     root.style.setProperty("--ui-size", `${uiSize}px`);
-    root.classList.toggle("dark", editorTheme === "dark");
-  }, [uiFont, uiSize, editorTheme]);
+    root.classList.toggle("dark", resolvedTheme === "dark");
+  }, [uiFont, uiSize, resolvedTheme]);
+
+  // 需求2：界面深浅切换（含「跟随系统」下 OS 变化）时，微信深色预览同步，使预览区随主界面深浅一致。
+  useEffect(() => {
+    setWxDark(resolvedTheme === "dark");
+  }, [resolvedTheme]);
 
   const changeLang = (l: Lang) => { setLang(l); persist({ lang: l }); };
   const changeTheme = (id: string) => { setTheme(id); persist({ theme: id }); };
-  const changeEditorTheme = (v: "light" | "dark") => { setEditorTheme(v); persist({ editorTheme: v }); };
+  const changeEditorTheme = (v: "light" | "dark" | "system") => { setEditorTheme(v); persist({ editorTheme: v }); };
   const toggleWxDark = () => { const v = !wxDark; setWxDark(v); persist({ wxDark: v }); };
   const changeUiFont = (v: string) => { setUiFont(v); persist({ uiFont: v }); };
   const changeUiSize = (v: number) => { setUiSize(v); persist({ uiSize: v }); };
@@ -724,7 +739,7 @@ export default function App() {
             key={current ?? "untitled"}
             initial={md}
             lang={lang}
-            appearance={editorTheme}
+            appearance={resolvedTheme}
             params={params}
             onParams={changeParams}
             pickImage={pickImage}
