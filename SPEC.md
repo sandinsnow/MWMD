@@ -1,7 +1,7 @@
 # MWMD · 微信公众号 Markdown 排版工具 — 产品与技术规格（SPEC）
 
 > 产品名 **MWMD**（仅在「关于」弹窗与本规格文件中展示；界面标题栏以图标呈现，不显示文字名）。
-> 版本 v1.12（**定稿**，可进入实现）· 最后更新 2026-09-15
+> 版本 v1.13（**定稿**，可进入实现）· 最后更新 2026-09-15
 > 定位：一款 **Windows 桌面、以 Rust 为主** 的**纯本地**单一功能应用——把 Markdown 写成排版精美、可**一键复制**并粘贴进微信公众号编辑器的图文。**不对接任何公众号 API**，图片以**编号占位块**处理。
 >
 > 变更记录
@@ -20,6 +20,7 @@
 > - v1.10：**可视化主题编辑器**（对比报告 §3.4 / P3）——视图菜单新增「主题编辑器…」，弹窗暴露 `Spec` 全部旋钮（标题/引用/表格/分隔线版式、首行缩进、行距、12 项调色板），可**基于任一预设载入**再改，**实时反映到右侧主预览**，保存为**自定义主题**（持久化于 `Config.custom_themes`，以 `custom:<id>` 前缀选用，出现在视图菜单「自定义主题」分组）。自定义主题与预设走**同一 Rust 渲染管线**（`resolve_theme`），输出仍是纯内联样式、微信安全（见 §4.15）。**Logo 单一源**：`src/app-icon.svg` 既作标题栏左上角图标（Vite `<img>` 导入），又经 `pnpm tauri icon` 栅格化为打包图标集，确保界面显示与应用图标一致（见 §4.8）。**M4-B 便携打包 + 发布 CI + 检查更新 MVP**：`tauri build --no-bundle` 出免安装单 exe；`.github/workflows/release.yml` + `scripts/make-latest-json.mjs` 在 `v*` 标签构建、算 SHA256、生成 `latest.json` 并发布到 `sandinsnow/MWMD` Releases；帮助菜单「检查更新…」前端 fetch GitHub API 比对版本、提示并打开下载页。完整自替换更新（下载/校验/替换）+ minisign 签名待联网构建环境补齐（见 §7）。**编辑器 ⇄ 预览联动滚动**：以「主面板」模型（记录用户最后交互的面板，仅由主面板按滚动比例镜像驱动另一侧、忽略程序化回波）实现双向同步且无反馈抖动（见 §4.3）。
 > - v1.11：**发布版本 0.1.1**——应用版本号由 `0.1.0` 提升到 `0.1.1`（同步于 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`；「关于」弹窗经 `getVersion()` 自动显示），打附注标签 `v0.1.1` 推送以触发 `.github/workflows/release.yml` 构建并发布便携单 exe 到 `sandinsnow/MWMD` Releases。本次发布内容 = **编辑器 ⇄ 预览联动滚动**（v1.10 记录，见 §4.3）。注：SPEC **文档版本（v1.x）** 与应用 **发布版本（0.1.x）** 是两套独立编号——前者描述规格演进，后者对应实际可下载构建。
 > - v1.12：**界面外观新增「跟随系统」+ 预览深浅随主界面同步**。① 外观偏好 `editor_theme` 由 `light/dark` 扩展为 `light/dark/system`；`system` 时经 `window.matchMedia("(prefers-color-scheme: dark)")` 解析出**实际生效深浅** `resolvedTheme`（并监听 OS 变化实时更新），根元素 `html.dark` 与编辑器 `appearance` 均改用 `resolvedTheme`（视图菜单单选仍显示 light/dark/system 偏好本身）。② **修订 v1.9「微信深色预览完全独立」**：每当生效深浅变化（手动切换，或「跟随系统」下 OS 深浅变化），`wx_dark` 自动同步为 `resolvedTheme==='dark'`，使实时预览区深浅始终随主界面一致；「微信深色预览」按钮保留供**会话内手动覆盖**，但下次深浅变化会重新同步，且启动时不再独立恢复 `wx_dark`（改由 `resolvedTheme` 派生）。安全约束不变：该映射只作用于预览展示，复制/导出仍由 Rust 从 md 重新渲染、输出 HTML 100% 不变（见 §4.4/§4.10/§4.14）。
+> - v1.13：**内部应用名称统一为 mwmd / MWMD**——清除历史遗留的 `wxmd` 命名：npm 包名 `wxmd→mwmd`；Cargo 包 `wxmd→mwmd`、lib 目标 `wxmd_lib→mwmd_lib`（`main.rs` 引用同步）；`Cargo.lock` 同步；Tauri `identifier` `dev.wxmd.app→dev.mwmd.app`；剪贴板纯文本兜底前缀 `wxmd:→MWMD:`；`release.yml` `BIN_NAME wxmd→mwmd`（CI 仍重命名为 `MWMD.exe`）；README/SPEC 中 cargo 二进制路径 `wxmd.exe→mwmd.exe`。**对外产品名保持 MWMD 不变**（标题栏图标/关于弹窗/发布产物）。注：identifier 变更会使配置存储目录由 `dev.wxmd.app` 迁到 `dev.mwmd.app`，旧偏好不迁移——当前未正式发布（0.1.x），可接受。
 
 ---
 
@@ -279,7 +280,7 @@ D:\PROJECT\
   - ⚠ Tauri 内置 updater 以**安装器**为更新载体，与「便携单 exe」不完全契合。本期采用**自替换式更新**：应用检查 `latest.json` → 下载新 exe → **校验更新签名** → 退出时用新文件替换自身（运行中的 exe 先改名再落新文件）并重启。
   - **updater 签名仍必须**：即便不做代码签名，更新包仍需用本地生成的更新私钥（minisign）签名并在客户端校验，防篡改；私钥入 CI Secret，公钥写入配置。
   - **分步实现**：MVP 先做「检查更新 + 提示新版本 + 打开下载页」；完整「下载 + 校验 + 自替换」在 Release 硬化阶段补齐（比安装器更新多一点自定义工作）。
-- **发布流水线（已脚手架，v1.10）**：`.github/workflows/release.yml` 在推送 `v*` 标签时于 `windows-latest` 上 `pnpm tauri build --no-bundle --target x86_64-pc-windows-msvc` 产出便携单 exe（cargo 二进制 `wxmd.exe` 重命名为 `MWMD.exe`），计算 SHA256，由 `scripts/make-latest-json.mjs` 生成 `latest.json`（version/notes/pub_date/platforms.windows-x86_64{url,sha256}），随 `MWMD.exe`、`MWMD.exe.sha256`、`latest.json` 一并发布到 GitHub Releases。
+- **发布流水线（已脚手架，v1.10）**：`.github/workflows/release.yml` 在推送 `v*` 标签时于 `windows-latest` 上 `pnpm tauri build --no-bundle --target x86_64-pc-windows-msvc` 产出便携单 exe（cargo 二进制 `mwmd.exe` 重命名为 `MWMD.exe`），计算 SHA256，由 `scripts/make-latest-json.mjs` 生成 `latest.json`（version/notes/pub_date/platforms.windows-x86_64{url,sha256}），随 `MWMD.exe`、`MWMD.exe.sha256`、`latest.json` 一并发布到 GitHub Releases。
 - **客户端检查更新（MVP 已实现，v1.10）**：仓库 `sandinsnow/MWMD`。帮助菜单「检查更新…」→ 前端 `src/update.ts` 用 WebView `fetch` 请求 **GitHub REST API** `repos/sandinsnow/MWMD/releases/latest`（`api.github.com` CORS 友好 `ACAO:*`，故走 API 而非 release 资产直链——后者 302 跳 CDN 常因缺 CORS 头被浏览器拦），读 `tag_name` 去 `v` 前缀与本机 `getVersion()` 逐段数值比对（`compareVersions`）。**有新版本**→ 确认弹窗「打开下载页」→ Rust 命令 `open_external`（仅放行受限字符集 https，无 shell 元字符，`cmd /C start` 注入安全）在默认浏览器打开 `releases/latest`；**已最新 / 失败**→ toast 提示。纯前端 fetch + 零新 Rust 依赖。
   - **未决（阻塞项）**：完整「下载新 exe + 校验 + 退出时自替换重启」尚未实现——① 下载需 HTTP 客户端，但本应用「纯离线」且当前构建环境**无法联网拉取新 crate**（`cargo add` 被分类器拦截），故须在**联网构建环境**补 HTTP/签名依赖；② **更新签名（minisign）**与客户端校验必须成对落地——现仅 SHA256（同源发布，只防损坏不防篡改），签名步骤待自替换实现时一并加入 CI；③ CI 与运行时 fetch 均**无法在本环境验证**（非 git、无网络、无 GUI）。本期 #31 交付：便携打包配置 + 发布 CI + `latest.json` 生成 + 客户端「检查更新」MVP。
 

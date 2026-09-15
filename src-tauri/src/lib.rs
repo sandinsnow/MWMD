@@ -85,7 +85,7 @@ fn render_markdown(md: String, theme: String, params: render::ThemeParams, spec:
 #[tauri::command]
 async fn copy_html(md: String, theme: String, params: render::ThemeParams, spec: Option<render::ThemeSpec>) -> Result<(), String> {
     let html = render::render_markdown(&md, &resolve_theme(&theme, &spec, &params));
-    let plain = "wxmd: 已复制微信富文本，请在公众号编辑器粘贴。".to_string();
+    let plain = "MWMD: 已复制微信富文本，请在公众号编辑器粘贴。".to_string();
     tauri::async_runtime::spawn_blocking(move || clipboard::copy_html(&html, &plain))
         .await
         .map_err(|e| e.to_string())?

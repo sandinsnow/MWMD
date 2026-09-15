@@ -17,9 +17,9 @@ permissions:
   contents: write
 
 env:
-  # 发布产物统一命名（cargo 二进制名为 wxmd.exe，CI 重命名为 MWMD.exe）
+  # 发布产物统一命名（cargo 二进制名为 mwmd.exe，CI 重命名为 MWMD.exe）
   APP_NAME: MWMD
-  BIN_NAME: wxmd
+  BIN_NAME: mwmd
   TARGET: x86_64-pc-windows-msvc
 
 jobs:

@@ -74,7 +74,7 @@ pnpm typecheck
 pnpm tauri build --no-bundle
 ```
 
-构建产物：`src-tauri/target/release/wxmd.exe`（已内嵌前端资源与图标，重命名后即可作为 `MWMD.exe` 分发）。
+构建产物：`src-tauri/target/release/mwmd.exe`（已内嵌前端资源与图标，重命名后即可作为 `MWMD.exe` 分发）。
 
 ### 运行测试
 

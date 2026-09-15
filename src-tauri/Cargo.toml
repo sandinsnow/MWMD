@@ -1,12 +1,12 @@
 [package]
-name = "wxmd"
+name = "mwmd"
 version = "0.1.1"
 description = "WeChat-friendly Markdown editor (local, Rust-first)"
 edition = "2021"
 license = "MIT"
 
 [lib]
-name = "wxmd_lib"
+name = "mwmd_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -2239,6 +2239,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "mwmd"
+version = "0.1.1"
+dependencies = [
+ "notify",
+ "pulldown-cmark",
+ "rfd",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tauri",
+ "tauri-build",
+ "webview2-com",
+ "winapi",
+ "windows",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5172,23 +5189,6 @@ dependencies = [
  "windows-core 0.61.2",
  "windows-version",
  "x11-dl",
-]
-
-[[package]]
-name = "wxmd"
-version = "0.1.1"
-dependencies = [
- "notify",
- "pulldown-cmark",
- "rfd",
- "serde",
- "serde_json",
- "syntect",
- "tauri",
- "tauri-build",
- "webview2-com",
- "winapi",
- "windows",
 ]
 
 [[package]]
