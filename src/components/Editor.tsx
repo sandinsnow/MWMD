@@ -139,8 +139,8 @@ const lightTheme = EditorView.theme({
   ".cm-gutters": { backgroundColor: "#ffffff", borderRight: "1px solid #eef0f3", color: "#c0c6ce" },
   ".cm-activeLine": { backgroundColor: "#f7f8fa" },
   ".cm-activeLineGutter": { backgroundColor: "#f0f2f5" },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "#ffe3cc !important" },
-  ".cm-cursor": { borderLeftColor: "#ff6a00" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel-bg) !important" },
+  ".cm-cursor": { borderLeftColor: "var(--accent)" },
 });
 
 const darkTheme = EditorView.theme({
@@ -150,8 +150,8 @@ const darkTheme = EditorView.theme({
   ".cm-gutters": { backgroundColor: "#1e2126", borderRight: "1px solid #2b2f36", color: "#5a616b" },
   ".cm-activeLine": { backgroundColor: "#252930" },
   ".cm-activeLineGutter": { backgroundColor: "#2b2f36" },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "#3a4150 !important" },
-  ".cm-cursor": { borderLeftColor: "#ff8a3d" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel-bg) !important" },
+  ".cm-cursor": { borderLeftColor: "var(--accent)" },
 });
 
 export default function Editor({ initial, lang, appearance, params, onParams, pickImage, onChange, scrollElementRef }: Props) {

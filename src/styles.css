@@ -16,13 +16,14 @@
   --text-dim: #8a9099;
   --hover: #eef1f4;
   --input-bg: #ffffff;
-  --accent: #3b9eff;
-  --accent-2: #5cb0ff;
-  --accent-soft: #e6f2ff;
-  --accent-text: #1f6fb2;
-  --accent-border: #b8dcff;
+  /* 品牌蓝单一源：与 src/app-icon.svg 渐变同族（#5cb8ff→#2f6fed，hue≈218） */
+  --accent: #2f6fed;
+  --accent-2: #5cb8ff;
+  --accent-soft: #e8f0fe;
+  --accent-text: #1f59bc;
+  --accent-border: #bcd2f8;
   --shadow: rgba(20,22,26,.16);
-  --sel-bg: #d6ebff;
+  --sel-bg: #d8e6fb;
 }
 
 :root.dark {
@@ -37,13 +38,13 @@
   --text-dim: #7a828c;
   --hover: #2c313a;
   --input-bg: #2c313a;
-  --accent: #4aa3f0;
-  --accent-2: #6bb6ef;
-  --accent-soft: #1e2c3a;
-  --accent-text: #8fc7f0;
-  --accent-border: #2f4d68;
+  --accent: #4d8ef0;
+  --accent-2: #6ba8f5;
+  --accent-soft: #1c2b40;
+  --accent-text: #93b8f5;
+  --accent-border: #2f4a6b;
   --shadow: rgba(0,0,0,.5);
-  --sel-bg: #2a3b4d;
+  --sel-bg: #2b4059;
 }
 
 html, body, #root { height: 100%; margin: 0; }
@@ -71,7 +72,7 @@ button { font-family: inherit; }
   display: inline-flex; align-items: center; gap: 6px;
   border: none; border-radius: 7px; padding: 6px 13px; font-size: calc(var(--ui-size) - 1px); cursor: pointer;
   background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: #fff;
-  box-shadow: 0 1px 2px rgba(255,106,0,.35);
+  box-shadow: 0 1px 2px rgba(47,111,237,.35);
 }
 .copy-btn:hover { filter: brightness(1.05); }
 .copy-btn:active { transform: translateY(1px); }
