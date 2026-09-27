@@ -23,7 +23,7 @@
   --accent-text: #1f59bc;
   --accent-border: #bcd2f8;
   --shadow: rgba(20,22,26,.16);
-  --sel-bg: #d8e6fb;
+  --sel-bg: rgba(47,111,237,.28);
 }
 
 :root.dark {
@@ -44,7 +44,7 @@
   --accent-text: #93b8f5;
   --accent-border: #2f4a6b;
   --shadow: rgba(0,0,0,.5);
-  --sel-bg: #2b4059;
+  --sel-bg: rgba(120,170,250,.32);
 }
 
 html, body, #root { height: 100%; margin: 0; }
