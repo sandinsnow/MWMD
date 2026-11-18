@@ -282,6 +282,31 @@ async fn search_content(roots: Vec<String>, query: String) -> Vec<workspace::Sea
         .unwrap_or_default()
 }
 
+/// 当前文档引用的图片列表，编号与正文占位块【此处插入图片 N】一致。
+/// async + spawn_blocking：随按键防抖高频调用，解析不能占住主线程。
+#[tauri::command]
+async fn list_doc_images(md: String, doc_path: String) -> Vec<workspace::DocImage> {
+    tauri::async_runtime::spawn_blocking(move || workspace::doc_images(&md, &doc_path))
+        .await
+        .unwrap_or_default()
+}
+
+/// 工作区内全部可预览图片。async + spawn_blocking：遍历读盘不能阻塞主线程。
+#[tauri::command]
+async fn list_workspace_images(roots: Vec<String>) -> Vec<workspace::WorkspaceImage> {
+    tauri::async_runtime::spawn_blocking(move || workspace::workspace_images(&roots, 500))
+        .await
+        .unwrap_or_default()
+}
+
+/// 读本地图片为 data URL：纯离线，不走网络、不启用 asset 协议通配 scope。
+#[tauri::command]
+async fn read_image(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || workspace::read_image(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn read_doc(path: String) -> Result<String, String> {
     workspace::read_doc(&path)
@@ -360,6 +385,9 @@ pub fn run() {
             remove_workspace,
             list_tree,
             search_content,
+            list_doc_images,
+            list_workspace_images,
+            read_image,
             read_doc,
             save_doc,
             create_doc,

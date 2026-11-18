@@ -2242,6 +2242,7 @@ dependencies = [
 name = "mwmd"
 version = "0.1.3"
 dependencies = [
+ "base64 0.22.1",
  "notify",
  "pulldown-cmark",
  "rfd",

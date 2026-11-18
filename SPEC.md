@@ -1,7 +1,7 @@
 # MWMD · 微信公众号 Markdown 排版工具 — 产品与技术规格（SPEC）
 
 > 产品名 **MWMD**（仅在「关于」弹窗与本规格文件中展示；界面标题栏以图标呈现，不显示文字名）。
-> 版本 v1.15（**定稿**，可进入实现）· 最后更新 2026-09-18
+> 版本 v1.16（**定稿**，可进入实现）· 最后更新 2026-11-18
 > 定位：一款 **Windows 桌面、以 Rust 为主** 的**纯本地**单一功能应用——把 Markdown 写成排版精美、可**一键复制**并粘贴进微信公众号编辑器的图文。**不对接任何公众号 API**，图片以**编号占位块**处理。
 >
 > 变更记录
@@ -22,7 +22,8 @@
 > - v1.12：**界面外观新增「跟随系统」+ 预览深浅随主界面同步**。① 外观偏好 `editor_theme` 由 `light/dark` 扩展为 `light/dark/system`；`system` 时经 `window.matchMedia("(prefers-color-scheme: dark)")` 解析出**实际生效深浅** `resolvedTheme`（并监听 OS 变化实时更新），根元素 `html.dark` 与编辑器 `appearance` 均改用 `resolvedTheme`（视图菜单单选仍显示 light/dark/system 偏好本身）。② **修订 v1.9「微信深色预览完全独立」**：每当生效深浅变化（手动切换，或「跟随系统」下 OS 深浅变化），`wx_dark` 自动同步为 `resolvedTheme==='dark'`，使实时预览区深浅始终随主界面一致；「微信深色预览」按钮保留供**会话内手动覆盖**，但下次深浅变化会重新同步，且启动时不再独立恢复 `wx_dark`（改由 `resolvedTheme` 派生）。安全约束不变：该映射只作用于预览展示，复制/导出仍由 Rust 从 md 重新渲染、输出 HTML 100% 不变（见 §4.4/§4.10/§4.14）。
 > - v1.13：**内部应用名称统一为 mwmd / MWMD**——清除历史遗留的 `wxmd` 命名：npm 包名 `wxmd→mwmd`；Cargo 包 `wxmd→mwmd`、lib 目标 `wxmd_lib→mwmd_lib`（`main.rs` 引用同步）；`Cargo.lock` 同步；Tauri `identifier` `dev.wxmd.app→dev.mwmd.app`；剪贴板纯文本兜底前缀 `wxmd:→MWMD:`；`release.yml` `BIN_NAME wxmd→mwmd`（CI 仍重命名为 `MWMD.exe`）；README/SPEC 中 cargo 二进制路径 `wxmd.exe→mwmd.exe`。**对外产品名保持 MWMD 不变**（标题栏图标/关于弹窗/发布产物）。注：identifier 变更会使配置存储目录由 `dev.wxmd.app` 迁到 `dev.mwmd.app`，旧偏好不迁移——当前未正式发布（0.1.x），可接受。
 > - v1.14：**修复粘贴宽内容把实时预览挤出视口**——v1.5 已给内层 `.editor-wrap/.preview-wrap/.editor/.preview` 补 `min-width:0`，但作为 `.body` 行向 flex 项的 `.split` 容器本身仍缺该声明，导致预览区中**不可断行的宽内容**（长 URL / `pre` 代码块 / 宽表格）抬高其 min-content 宽度、沿 flex 链把 `.split` 撑破并整页横向溢出。给 `.split` 补 `min-width:0` 后，宽内容改在预览区内横向滚动，不再推移布局（见 §4.11）。
-> - v1.15：**统一界面品牌蓝（消除色值不一致 + 清理旧橙色残留）**——此前 logo、高亮/激活文字、按钮等各处蓝色取自不同色值（logo 渐变 `#5cb8ff→#2f6fed` hue≈220、UI `--accent #3b9eff` hue≈209、`--accent-text #1f6fb2`），且标题栏复制按钮投影、CodeMirror 光标/选区仍是**早期橙色品牌残留**（`rgba(255,106,0,…)`、`#ff6a00`、`#ff8a3d`、`#ffe3cc`）。本次以 **logo 蓝为单一源**统一：`--accent`/`--accent-2` 直接取 logo 渐变两端 `#2f6fed`/`#5cb8ff`（使主按钮渐变 == logo 渐变），浅色/深色两套 accent 派生令牌（accent-soft/accent-text/accent-border/sel-bg）全部重定到同族 hue≈218；复制按钮投影改为品牌蓝 `rgba(47,111,237,.35)`；编辑器光标/选区不再硬编码，改绑 `var(--sel-bg)`/`var(--accent)`（并各带**字面 fallback**，防止变量意外不解析时选区完全消失）——与界面令牌同源、杜绝再次漂移。**选区色必须够显眼**：CodeMirror `basicSetup` 含 `drawSelection()`，它会用 `Prec.highest` 把原生 `::selection` 强制设为 `transparent`，高亮完全由 `.cm-selectionBackground` 绘制，故 `--sel-bg` 取品牌蓝**半透明值**（浅 `rgba(47,111,237,.28)`、深 `rgba(120,170,250,.32)`）——接近纯白的淡色会让用户觉得「划选没有高亮」。**logo 与打包图标不变**（无需重跑 `pnpm tauri icon`）。仅作用于软件 chrome，**文章主题与复制/导出输出 HTML 完全不受影响**（见 §4.10/§4.11）。**发布版本 0.1.3**：本条（品牌蓝统一）与其后的「选区高亮可见」修复一并按 `0.1.3` 发布（`package.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json` 四处同步，标签 `v0.1.3`）；`0.1.2` 仅含 v1.14 的粘贴宽内容布局修复。
+> - v1.15：**统一界面品牌蓝（消除色值不一致 + 清理旧橙色残留）**——此前 logo、高亮/激活文字、按钮等各处蓝色取自不同色值（logo 渐变 `#5cb8ff→#2f6fed` hue≈220、UI `--accent #3b9eff` hue≈209、`--accent-text #1f6fb2`），且标题栏复制按钮投影、CodeMirror 光标/选区仍是**早期橙色品牌残留**（`rgba(255,106,0,…)`、`#ff6a00`、`#ff8a3d`、`#ffe3cc`）。本次以 **logo 蓝为单一源**统一：`--accent`/`--accent-2` 直接取 logo 渐变两端 `#2f6fed`/`#5cb8ff`（使主按钮渐变 == logo 渐变），浅色/深色两套 accent 派生令牌（accent-soft/accent-text/accent-border/sel-bg）全部重定到同族 hue≈218；复制按钮投影改为品牌蓝 `rgba(47,111,237,.35)`；编辑器光标/选区不再硬编码，改绑 `var(--sel-bg)`/`var(--accent)`（并各带**字面 fallback**，防止变量意外不解析时选区完全消失）——与界面令牌同源、杜绝再次漂移。**选区色必须够显眼**：CodeMirror `basicSetup` 含 `drawSelection()`，它会用 `Prec.highest` 把原生 `::selection` 强制设为 `transparent`，高亮完全由 `.cm-selectionBackground` 绘制，故 `--sel-bg` 取品牌蓝**半透明值**（浅 `rgba(47,111,237,.28)`、深 `rgba(120,170,250,.32)`）——接近纯白的淡色会让用户觉得「划选没有高亮」。**logo 与打包图标不变**（无需重跑 `pnpm tauri icon`）。仅作用于软件 chrome，**文章主题与复制/导出输出 HTML 完全不受影响**（见 §4.10/§4.11）。
+> - v1.16：**侧栏图片面板 + 大图预览 / 修复划词选区被当前行盖住 / 图标定制（引入微信绿）**。① 侧栏改为「文档 / 图片」双标签：图片面板分「文中图片」（编号与占位块【此处插入图片 N】严格同源同序，Rust `doc_images` 与渲染共用新抽出的 `render::parser_opts()`）与「工作区图片」（递归枚举，上限 500），点击行 → 居中大图预览层（Esc/点遮罩关闭）；取图走 Rust 读字节 → **base64 data URL**，不启用 asset 协议通配 scope、不联网，仅放行图片扩展名白名单且限单图 16 MB；缩略图 `IntersectionObserver` 按需读盘、按 `path+size` 缓存（见 §4.2）。② **编辑器选区修复**：`drawSelection()` 强制隐藏原生 `::selection` 且选区层画在内容之下，v1.5 起不透明的 `.cm-activeLine` 底色把当前行的选区矩形盖掉——现当前行改半透明品牌蓝，选区与行高亮同族但强度可辨（见 §4.3）。③ **应用图标**：`src/app-icon.svg` 的 M↓ 描边加粗至 44 并使箭头与 M 基线对齐，**下箭头改为微信绿 `#07c160`**，表达「Markdown → 公众号」；底板仍沿用 v1.15 统一的蓝渐变 `#5cb8ff→#2f6fed`。**这是软件界面首次引入第二个品牌色**（仅用于图标内的箭头，界面 chrome 保持纯蓝单一源）；按 #42 约束已重跑 `pnpm tauri icon` 重生成打包图标集。渲染管线与复制/导出输出不变（图片依旧占位块，绝不输出 `<img>`）。**发布版本 0.1.3**：本条（品牌蓝统一）与其后的「选区高亮可见」修复一并按 `0.1.3` 发布（`package.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json` 四处同步，标签 `v0.1.3`）；`0.1.2` 仅含 v1.14 的粘贴宽内容布局修复。
 
 ---
 
@@ -146,12 +147,14 @@ D:\PROJECT\
 - 大目录性能：**懒加载 + 虚拟滚动**；非 .md 文件默认隐藏（可配置显示）。
 - 便携形态下，**应用配置**（工作区路径、主题、语言等）存于用户目录（如 `%APPDATA%\<app>`），与被编辑的 .md 工作区分离，保证 exe 可随意移动。
 - **文件监听（已实现，非 P2）**：`notify` 递归监听各工作区根目录，外部拖放/新建/重命名/删除触发 `fs-changed` 事件，前端 debounce(400ms) 后重扫目录树，及时显示外部改动。
+- **侧栏双标签：文档 / 图片（v1.16）**：侧栏顶部改为「文档 / 图片」标签行（收起按钮并入该行，两个标签都可用）。「图片」面板分两段：① **文中图片**——按文档内 `![](path)` 出现顺序列出并带**编号徽标**，与正文占位块【此处插入图片 N】**严格同源同序**（Rust `doc_images` 与 `render_markdown` 共用 `render::parser_opts()`，杜绝编号漂移）；相对路径按文档所在目录解析，`<>` 包裹与 `%XX` 编码均还原，文件缺失也照样占号（否则删图后正文错位）。② **工作区图片**——递归枚举各根的 png/jpg/jpeg/gif/webp/bmp/svg（跳过隐藏项，上限 500）。**点击任一行 → 居中大图预览层**（Esc 或点遮罩关闭，z-index 95 介于模态与提示之间）。**纯本地取图路径**：由 Rust `read_image` 读文件字节编码为 **base64 data URL**，不启用 asset 协议通配 scope、不联网；命令仅放行图片扩展名白名单并限制单图 16 MB，故无法用它读取任意文件。缩略图用 `IntersectionObserver` **滚到可见才读盘**，前端按 `path+size` 缓存 data URL（文件被替换后大小变化即自动失效），避免上百张图一次性灌进侧栏。渲染管线约束不变：**输出 HTML 里绝不出现 `<img>`**。
 
 ### 4.3 Markdown 编辑与实时预览
 - **编辑器**：CodeMirror 6，Markdown 高亮、行号、列表自动续行、Tab 缩进、查找替换、快捷键（Ctrl+S 保存、Ctrl+B/I 粗体/斜体、Ctrl+Shift+C 复制为微信富文本）。
 - **支持语法**：CommonMark + GFM（表格、删除线、任务列表、围栏代码块）、脚注。
 - **预览**：渲染 Rust 返回的内联样式 HTML。
 - **编辑器 ⇄ 预览联动滚动**（v1.10）：采用「主面板」模型——记录用户最后交互的面板（监听 `wheel`/`touchstart`/`pointerdown`/`keydown`），仅由主面板按滚动比例（`scrollTop/(scrollHeight-clientHeight)`）镜像驱动另一侧，忽略非主面板的 `scroll` 事件（即程序化滚动回波），从根本上避免双向同步的反馈循环抖动。编辑器滚动容器为 CodeMirror 的 `.cm-scroller`（经 `Editor` 的 `scrollElementRef` 暴露），预览滚动容器为 `.preview`；切换文件或折叠/展开预览时重新绑定。
+- **划词选区与当前行高亮的叠放约束（v1.16）**：`basicSetup` 含 `drawSelection()`，它用 `Prec.highest` 把原生 `::selection` 强制设为 `transparent`，高亮**完全**由 `.cm-selectionBackground` 绘制；而该层位于内容**之下**（`.cm-scroller` 是 `z-index:0` 的层叠上下文，图层 z-index 取 `-1-pos`）。**推论：任何不透明的 `.cm-activeLine` 背景都会把当前行的选区矩形盖掉**（v1.5 起主题曾设 `#f7f8fa`/`#252930`，正是「光标所在行划选看不见」的根因）。现在两者都用**半透明**值：选区浅 `rgba(47,111,237,.28)`/深 `rgba(120,170,250,.32)`（绑定 `--sel-bg`，带字面 fallback），当前行浅 `rgba(47,111,237,.055)`/深 `rgba(120,170,250,.07)`——选区强度明显高于行底色，叠加后仍可辨。选区色需与 `--hover`/`--accent-soft` 拉开距离，接近纯白的淡色会被判为「没有高亮」。
 
 ### 4.4 主题与排版（关键约束：微信只认内联样式）
 - **核心约束**：公众号编辑器剥离 `<style>`/class/外部字体；**只有 `style="..."` 内联样式被保留**。主题不能用 CSS 类实现。
@@ -387,6 +390,8 @@ D:\PROJECT\
 
 **v1.12 追加决策（用户确认）**
 43. **界面外观三选（浅/深/跟随系统）+ 微信深色预览随生效深浅同步**：① `editor_theme` 扩为 `light/dark/system`；`system` 时用 `window.matchMedia("(prefers-color-scheme: dark)")`（WebView2 跟随 OS）解析出**生效深浅** `resolvedTheme`，并监听 `change` 事件实时更新——`html.dark` 类与编辑器 `appearance` 均用 `resolvedTheme`，视图菜单单选仍反映 `light/dark/system` 偏好本身。② 每次 `resolvedTheme` 变化（手动切换或「跟随系统」下 OS 变化）用一个 `useEffect` 把 `wx_dark` 同步为 `resolvedTheme==='dark'`，保证预览区深浅随主界面一致；「微信深色预览」按钮保留为**会话内手动覆盖**，启动时不再独立恢复 `wx_dark`（改由 `resolvedTheme` 派生）。**安全约束不变**：HSL 映射只作用于前端预览，复制/导出由 Rust 从 md 重新渲染、输出 HTML 100% 不变（见 §4.4/§4.10/§4.14）。
+44. **图片预览 = Rust 读字节回 base64 data URL，而非启用 asset 协议**：工作区是用户临时任意选取的目录，`assetProtocol` 的 `scope` 只能写在配置里、**无法随运行时工作区变化**，要覆盖就得开 `**` 通配——比现有 `read_doc`（已可读任意路径）更宽，不如不加。改为 `read_image` 命令：**扩展名白名单（png/jpg/jpeg/gif/webp/bmp/svg）+ 必须是文件 + 单图 ≤16 MB**，超限或非法一律拒绝并给出短提示，边界可审计、纯本地零联网。代价是 base64 膨胀约 1/3，故缩略图**仅在 `IntersectionObserver` 判定可见后才读盘**，并按 `path+size` 做缓存（文件被替换通常大小变化，自动失效），自动保存 md 触发的 `fs-changed` 不会导致全量重读。`base64` 版本对齐 Cargo.lock 既有 0.22.1，离线构建不需新下载。**同源约束**：`doc_images` 与 `render_markdown` 共用 `render::parser_opts()`，图片编号才不会与占位块错位（重复引用、缺失文件、外链均照常占号）。
+45. **应用图标 = 蓝色渐变底板 + 微信绿箭头的双品牌色例外**：`src/app-icon.svg` 的 `M↓` 保留（即 Markdown 官方标记），描边 40→44、箭头与 M 基线对齐、间距加宽避免小尺寸粘连；**仅把下箭头着色为微信绿 `#07c160`**，用图像语义表达「Markdown → 公众号」。这是软件内**唯一**的第二品牌色，且只出现在图标里——界面 chrome 仍严格用 v1.15 统一的蓝色令牌（`--accent #2f6fed` 等），不因此扩散。单一源约束不变：改 logo 后已重跑 `pnpm tauri icon` 重生成 `icon.ico/icns/png` 全套（见 #42/§4.8）。
 
 
 ---
