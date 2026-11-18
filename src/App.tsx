@@ -5,7 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Editor, { type ThemeParams } from "./components/Editor";
 import FileTree, { Node } from "./components/FileTree";
-import ImagePanel from "./components/ImagePanel";
+import ImagePreview, { type PreviewTarget } from "./components/ImagePreview";
 import MenuBar, { type ThemeMeta } from "./components/MenuBar";
 import HelpModal from "./components/HelpModal";
 import ThemeEditor, { type CustomTheme, type ThemeDraft, type ThemeSpec } from "./components/ThemeEditor";
@@ -80,7 +80,7 @@ export default function App() {
   const [uiSize, setUiSize] = useState(13);
   const [version, setVersion] = useState("");
   const [sideCollapsed, setSideCollapsed] = useState(false);
-  const [sideTab, setSideTab] = useState<"docs" | "images">("docs");
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
   // 联动滚动：编辑器滚动容器（由 Editor 写入 CodeMirror 的 .cm-scroller）与预览滚动容器（.preview）。
   const editorScrollRef = useRef<HTMLElement | null>(null);
@@ -413,7 +413,7 @@ export default function App() {
     try {
       await invoke("create_doc", { path });
       await refresh(workspaces);
-      await openDoc({ name, path, is_dir: false });
+      await openDoc({ name, path, is_dir: false, is_image: false });
       showToast(t("created", { name }));
     } catch (e) {
       showToast(t("errCreateFile", { e: String(e) }), true);
@@ -656,19 +656,6 @@ export default function App() {
           </div>
         ) : (
           <aside className="sidebar">
-            <div className="side-tabs">
-              <button
-                className={"seg" + (sideTab === "docs" ? " on" : "")}
-                onClick={() => setSideTab("docs")}
-              >{t("sideTabDocs")}</button>
-              <button
-                className={"seg" + (sideTab === "images" ? " on" : "")}
-                onClick={() => setSideTab("images")}
-              >{t("sideTabImages")}</button>
-              <button className="icon-btn" title={t("collapseSidebar")} onClick={() => setSideCollapsed(true)}><Icon name="chevronLeft" size={15} /></button>
-            </div>
-            {sideTab === "docs" && (
-              <>
             <div className="side-head">
               <div className="search-box">
                 <Icon name="search" size={13} />
@@ -680,6 +667,7 @@ export default function App() {
               </div>
               <button className="icon-btn" title={t("newFile")} onClick={newFile}><Icon name="filePlus" size={15} /></button>
               <button className="icon-btn" title={t("newFolder")} onClick={newFolder}><Icon name="folderPlus" size={15} /></button>
+              <button className="icon-btn" title={t("collapseSidebar")} onClick={() => setSideCollapsed(true)}><Icon name="chevronLeft" size={15} /></button>
             </div>
             <div className="search-modes">
               <button
@@ -705,7 +693,7 @@ export default function App() {
                         <button
                           key={h.path + ":" + h.line}
                           className={"hit" + (current === h.path ? " active" : "")}
-                          onClick={() => openDoc({ name: h.name, path: h.path, is_dir: false })}
+                          onClick={() => openDoc({ name: h.name, path: h.path, is_dir: false, is_image: false })}
                           title={h.path}
                         >
                           <span className="hit-head">
@@ -729,6 +717,7 @@ export default function App() {
                     lang={lang}
                     roots={rootSet}
                     onOpen={openDoc}
+                    onPreview={(n) => setPreview({ name: n.name, path: n.path })}
                     onSelectDir={setSelectedDir}
                     onRename={rename}
                     onDelete={del}
@@ -737,12 +726,6 @@ export default function App() {
                 )
               )}
             </div>
-              </>
-            )}
-
-            {sideTab === "images" && (
-              <ImagePanel docPath={current} md={md} roots={workspaces} lang={lang} />
-            )}
             <div className="side-foot">
               <span className="ws" title={workspaces.join("\n")}>
                 {workspaces.length ? t("workspaceCount", { n: workspaces.length }) : t("noWorkspace")}
@@ -821,6 +804,7 @@ export default function App() {
         </div>
       )}
 
+      {preview && <ImagePreview target={preview} lang={lang} onClose={() => setPreview(null)} />}
       {helpOpen && <HelpModal lang={lang} onClose={() => setHelpOpen(false)} />}
       {draft && (
         <ThemeEditor

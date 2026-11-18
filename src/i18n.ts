@@ -99,16 +99,6 @@ const DICT: Record<string, [string, string]> = {
   expandSidebar: ["展开侧栏", "Expand sidebar"],
   collapsePreview: ["收起预览", "Collapse preview"],
   expandPreview: ["展开预览", "Expand preview"],
-  // 侧栏：文档 / 图片
-  sideTabDocs: ["文档", "Files"],
-  sideTabImages: ["图片", "Images"],
-  imgInDoc: ["文中图片", "Images in document"],
-  imgInWorkspace: ["工作区图片", "Workspace images"],
-  imgCount: ["{n} 张", "{n} images"],
-  imgEmptyDoc: ["本文未引用图片", "This document references no images"],
-  imgEmptyWorkspace: ["工作区内没有图片", "No images in the workspaces"],
-  imgNeedSaved: ["保存文档后即可列出文中图片", "Save the document to list its images"],
-  imgMissing: ["文件不存在", "File not found"],
   // 菜单栏
   menuFile: ["文件", "File"],
   menuView: ["视图", "View"],

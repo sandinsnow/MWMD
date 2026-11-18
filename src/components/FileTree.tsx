@@ -6,6 +6,7 @@ export interface Node {
   name: string;
   path: string;
   is_dir: boolean;
+  is_image: boolean;
   children?: Node[];
 }
 
@@ -16,6 +17,7 @@ interface Props {
   depth?: number;
   roots?: Set<string>;
   onOpen: (n: Node) => void;
+  onPreview?: (n: Node) => void;
   onSelectDir: (path: string) => void;
   onRename: (n: Node) => void;
   onDelete: (n: Node) => void;
@@ -29,6 +31,7 @@ export default function FileTree({
   depth = 0,
   roots,
   onOpen,
+  onPreview,
   onSelectDir,
   onRename,
   onDelete,
@@ -72,6 +75,8 @@ export default function FileTree({
                 if (n.is_dir) {
                   toggle(n.path);
                   onSelectDir(n.path);
+                } else if (n.is_image) {
+                  onPreview?.(n);
                 } else {
                   onOpen(n);
                 }
@@ -83,7 +88,7 @@ export default function FileTree({
                 ) : null}
               </span>
               <span className="ticon">
-                <Icon name={n.is_dir ? "folder" : "file"} size={14} />
+                <Icon name={n.is_dir ? "folder" : n.is_image ? "image" : "file"} size={14} />
               </span>
               <span className="name" title={n.path}>{n.name}</span>
               <span className="actions">
@@ -117,6 +122,7 @@ export default function FileTree({
                 depth={depth + 1}
                 roots={roots}
                 onOpen={onOpen}
+                onPreview={onPreview}
                 onSelectDir={onSelectDir}
                 onRename={onRename}
                 onDelete={onDelete}

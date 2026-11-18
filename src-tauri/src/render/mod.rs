@@ -822,21 +822,15 @@ pub fn themed_spec(spec: &ThemeSpec, p: &ThemeParams) -> Theme {
     apply_params(spec.to_theme(), p)
 }
 
-/// Markdown 扩展选项的单一来源：渲染与「侧栏图片列表」必须用同一套，
-/// 否则图片编号会与占位块【此处插入图片 N】漂移。
-pub fn parser_opts() -> Options {
+/// 把 Markdown 渲染为「全内联样式」HTML。图片/公式统一为编号占位块（共用同一编号序列）。
+/// 占位文案固定中文（面向公众号读者），不随界面语言变化。
+pub fn render_markdown(md: &str, t: &Theme) -> String {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_FOOTNOTES);
-    opts
-}
 
-/// 把 Markdown 渲染为「全内联样式」HTML。图片/公式统一为编号占位块（共用同一编号序列）。
-/// 占位文案固定中文（面向公众号读者），不随界面语言变化。
-pub fn render_markdown(md: &str, t: &Theme) -> String {
-    let opts = parser_opts();
     let mut out = String::new();
     let mut counter = 0usize;
     let mut in_code = false;
