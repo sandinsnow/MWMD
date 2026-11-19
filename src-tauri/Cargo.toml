@@ -1,6 +1,6 @@
 [package]
 name = "mwmd"
-version = "0.1.4"
+version = "0.1.5"
 description = "WeChat-friendly Markdown editor (local, Rust-first)"
 edition = "2021"
 license = "MIT"
