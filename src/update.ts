@@ -25,9 +25,10 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export async function fetchLatest(): Promise<LatestInfo> {
+export async function fetchLatest(signal?: AbortSignal): Promise<LatestInfo> {
   // Accept: application/json 属 CORS 安全头，不触发预检 → 简单 GET。
-  const res = await fetch(API_LATEST, { headers: { Accept: "application/json" } });
+  // signal 由调用方传入：断网/被墙时 fetch 可能长时间挂起，必须能被超时或用户取消打断。
+  const res = await fetch(API_LATEST, { headers: { Accept: "application/json" }, signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json();
   const tag = String(j?.tag_name ?? "");

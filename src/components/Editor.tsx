@@ -210,7 +210,9 @@ export default function Editor({ initial, lang, appearance, params, onParams, pi
     const path = await pickImage();
     if (!path) return;
     const name = path.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
-    insertBlock(v, `\n![${name}](${path})\n`);
+    // 路径含空格时裸写 (...) 不是合法的图片目标，必须用 <...>；alt 里的方括号要转义，否则会截断语法。
+    const alt = name.replace(/[[\]]/g, "\\$&");
+    insertBlock(v, `\n![${alt}](<${path}>)\n`);
   };
 
   const renderBtn = (b: Btn) => (

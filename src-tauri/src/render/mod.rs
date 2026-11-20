@@ -377,15 +377,24 @@ fn table_style(tb: TableStyle, accent: &str, soft: &str, head_c: &str, border: &
     }
 }
 
-/// 判断十六进制底色是否为深色（相对亮度 < 0.5）。用于给语法高亮选暗/亮配色。
+/// 判断底色是否为深色（相对亮度 < 0.5）。用于给语法高亮选暗/亮配色。
+/// 整体解析十六进制而非按字节切片：非法/多字节字符串只会解析失败，不会 panic。
 fn is_dark_hex(hex: &str) -> bool {
     let h = hex.trim_start_matches('#');
-    if h.len() != 6 {
-        return true;
-    }
-    let chan = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f64;
-    let lum = (0.299 * chan(0) + 0.587 * chan(2) + 0.114 * chan(4)) / 255.0;
+    let v = match u32::from_str_radix(h, 16) {
+        Ok(v) if h.len() == 6 => v,
+        _ => return true,
+    };
+    let chan = |shift: u32| ((v >> shift) & 0xff) as f64;
+    let lum = (0.299 * chan(16) + 0.587 * chan(8) + 0.114 * chan(0)) / 255.0;
     lum < 0.5
+}
+
+/// 颜色规格合法性：必须是 `#rrggbb`。自定义主题来自 config.json（可手改）与将来的主题导入，
+/// 而颜色串是裸插进 style 属性的，故必须在渲染前收口校验。
+fn is_hex6(v: &str) -> bool {
+    let h = v.strip_prefix('#').unwrap_or("");
+    h.len() == 6 && h.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// syntect 默认语法集（含换行版，逐行高亮所需）。体积大，进程内缓存一次。
@@ -594,6 +603,37 @@ impl ThemeSpec {
             ph_bg: s.ph_bg.into(),
             ph_fg: s.ph_fg.into(),
         }
+    }
+
+    /// 清洗外部来源的规格：颜色必须 `#rrggbb`、行距必须是 1.0–3.0 的数值，非法项回退 default 预设。
+    /// 渲染/复制/导出都经 `themed_spec`，故这里是唯一收口点；合法预设原样通过。
+    pub fn sanitized(&self) -> ThemeSpec {
+        let base = ThemeSpec::from_preset("default");
+        let mut s = self.clone();
+        for (v, fallback) in [
+            (&mut s.accent, &base.accent),
+            (&mut s.soft, &base.soft),
+            (&mut s.head_c, &base.head_c),
+            (&mut s.link, &base.link),
+            (&mut s.code_bg, &base.code_bg),
+            (&mut s.code_fg, &base.code_fg),
+            (&mut s.inline_bg, &base.inline_bg),
+            (&mut s.inline_fg, &base.inline_fg),
+            (&mut s.border, &base.border),
+            (&mut s.ph_border, &base.ph_border),
+            (&mut s.ph_bg, &base.ph_bg),
+            (&mut s.ph_fg, &base.ph_fg),
+        ] {
+            if !is_hex6(v) {
+                *v = fallback.clone();
+            }
+        }
+        s.lh = match self.lh.trim().parse::<f64>() {
+            Ok(n) if n.is_finite() && (1.0..=3.0).contains(&n) => self.lh.trim().to_string(),
+            Ok(n) if n.is_finite() => format!("{:.2}", n.clamp(1.0, 3.0)),
+            _ => base.lh.clone(),
+        };
+        s
     }
 
     /// 用本规格构造内联样式主题（不含全局字体/字号/对齐参数，那由 `themed_spec` 追加）。
@@ -817,9 +857,24 @@ pub fn themed(id: &str, p: &ThemeParams) -> Theme {
     apply_params(Theme::by_id(id), p)
 }
 
-/// 按可视化编辑器产出的自定义规格构造主题并叠加全局参数。
+/// 按可视化编辑器产出的自定义规格构造主题并叠加全局参数。规格先清洗，杜绝非法颜色/行距。
 pub fn themed_spec(spec: &ThemeSpec, p: &ThemeParams) -> Theme {
-    apply_params(spec.to_theme(), p)
+    apply_params(spec.sanitized().to_theme(), p)
+}
+
+/// 链接协议白名单：只放行 http/https/mailto，其余（javascript:/data:/file:/vbscript: 等）降级为纯文本。
+/// 先剔除 ASCII 控制字符与空白——浏览器会忽略 URL 里的 \t \n \r，`java\tscript:` 一样能执行。
+fn safe_href(url: &str) -> Option<String> {
+    let cleaned: String = url
+        .chars()
+        .filter(|c| !c.is_ascii_control() && !c.is_ascii_whitespace())
+        .collect();
+    let lower = cleaned.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:") {
+        Some(cleaned)
+    } else {
+        None
+    }
 }
 
 /// 把 Markdown 渲染为「全内联样式」HTML。图片/公式统一为编号占位块（共用同一编号序列）。
@@ -829,6 +884,9 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
+    // 启用脚注解析，但**不**按脚注语义渲染：微信不支持脚注，引用标记与定义正文都原样保留为可见文本。
+    // 不能简单关掉这个 Option——关掉后 `[^1]: 参见附录。` 会被 CommonMark 当成「链接引用定义」
+    // （中文正文没有空格，恰好是合法的链接目标），整段被吞掉，正文里的 [^1] 也退化成 ^1。
     opts.insert(Options::ENABLE_FOOTNOTES);
 
     let mut out = String::new();
@@ -841,6 +899,10 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
     let mut row_alt = false;
     let mut code_lang = String::new();
     let mut code_buf = String::new();
+    // 每层链接是否真的输出了 <a>：协议非法时只留文字，End 时就不能补 </a>。
+    let mut link_open: Vec<bool> = Vec::new();
+    // 脚注定义的标签：暂存到它内部第一个段落开头再输出，这样 `[^1]: 正文` 连成一行而不是断成两块。
+    let mut fn_pending: Option<String> = None;
 
     for ev in Parser::new_ext(md, opts) {
         match ev {
@@ -848,7 +910,13 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
                 Tag::Heading { level, .. } => {
                     out.push_str(&format!("<h{} style=\"{}\">", level as u8, heading_style(t, level as u8)))
                 }
-                Tag::Paragraph => out.push_str(&format!("<p style=\"{}\">", t.p)),
+                Tag::Paragraph => {
+                    out.push_str(&format!("<p style=\"{}\">", t.p));
+                    if let Some(label) = fn_pending.take() {
+                        out.push_str(&escape_html(&format!("[^{}]: ", label)));
+                    }
+                }
+                Tag::FootnoteDefinition(label) => fn_pending = Some(label.to_string()),
                 Tag::Strong => out.push_str(&format!("<strong style=\"{}\">", t.strong)),
                 Tag::Emphasis => out.push_str(&format!("<em style=\"{}\">", t.em)),
                 Tag::Strikethrough => out.push_str(&format!("<del style=\"{}\">", t.del)),
@@ -861,9 +929,13 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
                     };
                     out.push_str(&format!("<pre style=\"{}\"><code style=\"{}\">", t.pre, t.code));
                 }
-                Tag::Link { dest_url, .. } => {
-                    out.push_str(&format!("<a style=\"{}\" href=\"{}\">", t.a, escape_attr(&dest_url)))
-                }
+                Tag::Link { dest_url, .. } => match safe_href(&dest_url) {
+                    Some(href) => {
+                        out.push_str(&format!("<a style=\"{}\" href=\"{}\">", t.a, escape_attr(&href)));
+                        link_open.push(true);
+                    }
+                    None => link_open.push(false),
+                },
                 Tag::Image { dest_url, .. } => {
                     counter += 1;
                     out.push_str(&placeholder_html(t, counter, &dest_url));
@@ -900,6 +972,12 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
             Event::End(tag) => match tag {
                 TagEnd::Heading(level) => out.push_str(&format!("</h{}>", level as u8)),
                 TagEnd::Paragraph => out.push_str("</p>"),
+                TagEnd::FootnoteDefinition => {
+                    // 定义为空（没有任何段落）时也要把标记留下，不能整条消失。
+                    if let Some(label) = fn_pending.take() {
+                        out.push_str(&format!("<p style=\"{}\">{}</p>", t.p, escape_html(&format!("[^{}]:", label))));
+                    }
+                }
                 TagEnd::Strong => out.push_str("</strong>"),
                 TagEnd::Emphasis => out.push_str("</em>"),
                 TagEnd::Strikethrough => out.push_str("</del>"),
@@ -910,7 +988,11 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
                     code_buf.clear();
                     code_lang.clear();
                 }
-                TagEnd::Link => out.push_str("</a>"),
+                TagEnd::Link => {
+                    if link_open.pop().unwrap_or(false) {
+                        out.push_str("</a>");
+                    }
+                }
                 TagEnd::Image => in_image = false,
                 TagEnd::List(true) => out.push_str("</ol>"),
                 TagEnd::List(false) => out.push_str("</ul>"),
@@ -947,6 +1029,11 @@ pub fn render_markdown(md: &str, t: &Theme) -> String {
             }
             Event::Code(txt) => {
                 out.push_str(&format!("<code style=\"{}\">{}</code>", t.code_inline, escape_html(&txt)))
+            }
+            Event::FootnoteReference(label) => {
+                if !in_image && !in_code {
+                    out.push_str(&escape_html(&format!("[^{}]", label)));
+                }
             }
             Event::SoftBreak => out.push('\n'),
             Event::HardBreak => out.push_str("<br/>"),
@@ -1150,5 +1237,134 @@ mod tests {
         // 未知 token 回退默认版式而非 panic
         spec.head = "not-a-style".into();
         let _ = themed_spec(&spec, &p);
+    }
+
+    #[test]
+    fn unsafe_link_schemes_degrade_to_plain_text() {
+        let t = themed("default", &ThemeParams::default());
+        let cases = [
+            "[x](javascript:alert(1))",
+            "[x](JaVaScRiPt:alert(1))",
+            "[x](java\tscript:alert(1))",
+            "[x](data:text/html,<b>x</b>)",
+            "[x](file:///C:/windows/win.ini)",
+            "[x](vbscript:msgbox(1))",
+            "[x](//evil.example/a)",
+        ];
+        for md in cases {
+            let html = render_markdown(md, &t);
+            assert!(!html.contains("<a "), "危险协议不应输出可点击链接：{md} => {html}");
+            assert!(!html.contains("</a>"), "不应留下孤立闭合标签：{md} => {html}");
+            assert!(!html.contains("href"), "不应留下任何 href：{md} => {html}");
+        }
+        // 常规危险协议：链接文字仍应作为纯文本可见（含 tab 的 URL 根本不是合法链接语法，原样留字即可）
+        for md in ["[x](javascript:alert(1))", "[x](data:text/html,<b>x</b>)"] {
+            let html = render_markdown(md, &t);
+            assert!(html.contains(">x<"), "链接文字应保留为纯文本：{md} => {html}");
+        }
+    }
+
+    #[test]
+    fn safe_links_keep_href_and_query() {
+        let t = themed("default", &ThemeParams::default());
+        for (md, href) in [
+            ("[x](https://a.example/p?q=1&r=2)", "https://a.example/p?q=1&amp;r=2"),
+            ("[x](http://a.example)", "http://a.example"),
+            ("[x](mailto:a@b.com)", "mailto:a@b.com"),
+        ] {
+            let html = render_markdown(md, &t);
+            assert!(html.contains(&format!("href=\"{href}\"")), "应原样保留 {href}：{html}");
+            assert!(html.contains("</a>"), "应正确闭合：{html}");
+        }
+    }
+
+    #[test]
+    fn link_wrapping_image_still_closes_once() {
+        let t = themed("default", &ThemeParams::default());
+        let html = render_markdown("[![a](p.png)](https://a.example)\n", &t);
+        assert_eq!(html.matches("<a ").count(), 1, "{html}");
+        assert_eq!(html.matches("</a>").count(), 1, "{html}");
+        assert!(html.contains("【此处插入图片 1】"), "{html}");
+        // 非法协议 + 图片：图片占位仍在，但不产出 <a>
+        let bad = render_markdown("[![a](p.png)](javascript:alert(1))\n", &t);
+        assert!(!bad.contains("<a "), "{bad}");
+        assert!(bad.contains("【此处插入图片 1】"), "{bad}");
+    }
+
+    #[test]
+    fn footnote_markers_stay_visible() {
+        let t = themed("default", &ThemeParams::default());
+        let html = render_markdown("Body[^1]\n\n[^1]: note text\n", &t);
+        assert!(html.contains("[^1]"), "脚注标记不应被静默丢弃：{html}");
+        assert!(html.contains("note text"), "脚注正文不应丢失：{html}");
+    }
+
+    /// 中文脚注正文没有空格，恰好是合法的「链接引用定义」目标——关掉 ENABLE_FOOTNOTES 时整段会被吞掉。
+    #[test]
+    fn footnote_definition_without_spaces_is_not_swallowed() {
+        let t = themed("default", &ThemeParams::default());
+        let html = render_markdown("正文[^zh]\n\n[^zh]: 参见附录。\n", &t);
+        assert!(html.contains("[^zh]"), "引用标记应原样可见：{html}");
+        assert!(html.contains("参见附录。"), "定义正文不得丢失：{html}");
+        assert!(!html.contains("<a "), "不得把脚注定义误当成链接：{html}");
+        assert!(!html.contains("href"), "不得产生 href：{html}");
+    }
+
+    #[test]
+    fn footnote_definition_keeps_paragraphs_and_empty_label() {
+        let t = themed("default", &ThemeParams::default());
+        let html = render_markdown("A[^m]\n\n[^m]: 第一段\n\n    第二段\n", &t);
+        assert!(html.contains("第一段") && html.contains("第二段"), "多段定义都要保留：{html}");
+        assert_eq!(html.matches("<p ").count(), html.matches("</p>").count(), "段落标签必须配对：{html}");
+        let empty = render_markdown("B[^e]\n\n[^e]:\n", &t);
+        assert!(empty.contains("[^e]"), "空定义也要留下标记：{empty}");
+    }
+
+    #[test]
+    fn image_destination_with_spaces_and_backslashes() {
+        let t = themed("default", &ThemeParams::default());
+        // 工具栏插入的 Windows 绝对路径含空格与反斜杠，必须用尖括号形式才能被解析
+        let html = render_markdown(r"![p](<D:\my pics\a.png>)", &t);
+        assert!(html.contains("【此处插入图片 1】"), "应识别为图片占位：{html}");
+        assert!(html.contains(r"D:\my pics\a.png"), "路径应完整保留：{html}");
+        assert!(!html.contains("<img"), "不得输出真实 img：{html}");
+        // 不带尖括号的含空格路径不是合法图片语法（这是 Markdown 规则，非本程序缺陷）
+        let bare = render_markdown("![p](assets/a b.png)\n", &t);
+        assert!(!bare.contains("【此处插入图片"), "{bare}");
+    }
+
+    #[test]
+    fn malicious_theme_spec_is_sanitized() {
+        let mut s = ThemeSpec::from_preset("default");
+        s.accent = "#fff\" onmouseover=\"alert(1)".into();
+        s.code_bg = "中中".into(); // 6 字节多字节串：旧实现按字节切片会 panic
+        s.lh = "1.75;behavior:url(#x)".into();
+        let t = themed_spec(&s, &ThemeParams::default());
+        let html = render_markdown("**b**\n\n> q\n\n```rust\nfn main(){}\n```\n", &t);
+        assert!(!html.contains("onmouseover"), "不得逃出 style 属性：{html}");
+        assert!(!html.contains("behavior:"), "非法行距不得注入额外声明：{html}");
+        assert!(t.strong.contains("#ff6a00"), "非法强调色应回退预设：{}", t.strong);
+        assert!(t.p.contains("line-height:1.75;"), "非法行距应回退预设：{}", t.p);
+        assert!(t.code_dark, "非法代码底色应回退预设深底：{}", t.pre);
+    }
+
+    #[test]
+    fn sanitization_keeps_valid_presets_intact() {
+        for m in available_themes() {
+            let s = ThemeSpec::from_preset(&m.id);
+            let c = s.sanitized();
+            assert_eq!(c.lh, s.lh, "{} 行距被改动", m.id);
+            assert_eq!(c.accent, s.accent, "{} 强调色被改动", m.id);
+            assert_eq!(c.code_bg, s.code_bg, "{} 代码底色被改动", m.id);
+        }
+    }
+
+    #[test]
+    fn out_of_range_line_height_is_clamped() {
+        let mut s = ThemeSpec::from_preset("default");
+        s.lh = "99".into();
+        assert!(themed_spec(&s, &ThemeParams::default()).p.contains("line-height:3.00;"));
+        s.lh = "0.1".into();
+        assert!(themed_spec(&s, &ThemeParams::default()).p.contains("line-height:1.00;"));
     }
 }

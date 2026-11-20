@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -40,6 +40,12 @@ function filterTree(nodes: Node[], q: string): Node[] {
 
 const join = (dir: string, name: string) => dir.replace(/[/\\]+$/, "") + "\\" + name;
 const ensureMd = (name: string) => (name.toLowerCase().endsWith(".md") ? name : name + ".md");
+const extOf = (name: string) => /\.[^./\\]+$/.exec(name)?.[0] ?? "";
+// 图片改名必须保住原扩展名：丢了 .png 就既不在树里显示、也无法预览。新名已带同一扩展名则不重复追加。
+const keepExt = (name: string, orig: string) => {
+  const e = extOf(orig);
+  return e && !name.toLowerCase().endsWith(e.toLowerCase()) ? name + e : name;
+};
 const DEFAULT_PARAMS: ThemeParams = { font_family: "sans", font_size: 16, align: "left" };
 
 interface SearchHit {
@@ -63,6 +69,8 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [toast, setToast] = useState<{ msg: string; error: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // 仅「检查更新」这类可中断的等待提供取消按钮；导出 PDF 不可中途取消。
+  const [busyCancel, setBusyCancel] = useState<(() => void) | null>(null);
   const [lang, setLang] = useState<Lang>("zh");
   const [theme, setTheme] = useState("default");
   const [editorTheme, setEditorTheme] = useState<"light" | "dark" | "system">("light");
@@ -85,16 +93,33 @@ export default function App() {
   // 联动滚动：编辑器滚动容器（由 Editor 写入 CodeMirror 的 .cm-scroller）与预览滚动容器（.preview）。
   const editorScrollRef = useRef<HTMLElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
-  const win = getCurrentWindow();
+  const win = useMemo(() => getCurrentWindow(), []);
   const modal = useModal();
   const t = useCallback((k: string, vars?: Record<string, string | number>) => tr(lang, k, vars), [lang]);
   const wsRef = useRef<string[]>([]);
   wsRef.current = workspaces;
+  const langRef = useRef(lang);
+  langRef.current = lang;
+  // 防抖窗口内尚未落盘的那一次自动保存。切换文档、重命名/删除当前文件、关窗前都必须先写掉，
+  // 否则 effect 的 cleanup 会 clearTimeout，把最后 800ms 内的编辑静默丢弃。
+  const pendingSave = useRef<{ path: string; content: string } | null>(null);
 
   const showToast = (msg: string, error = false) => {
     setToast({ msg, error });
     setTimeout(() => setToast(null), 2600);
   };
+
+  const flushSave = useCallback(async () => {
+    const p = pendingSave.current;
+    if (!p) return;
+    pendingSave.current = null;
+    try {
+      await invoke("save_doc", { path: p.path, content: p.content });
+    } catch (e) {
+      showToast(tr(langRef.current, "errSave", { e: String(e) }), true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const persist = (over: Partial<{ lang: Lang; theme: string; editorTheme: string; uiFont: string; uiSize: number; wxDark: boolean; params: ThemeParams; customThemes: CustomTheme[] }>) => {
     const nextLang = over.lang ?? lang;
@@ -113,10 +138,15 @@ export default function App() {
   };
 
   const checkUpdate = useCallback(async () => {
+    const ctrl = new AbortController();
+    let userCancelled = false;
+    // 断网/被墙时 fetch 可能挂很久，忙碌遮罩会锁死整个界面：10 秒超时兜底 + 允许用户主动取消。
+    const timer = setTimeout(() => ctrl.abort(), 10000);
     setBusy(t("updateChecking"));
+    // 外层箭头是必需的：setState 会把函数参数当成 updater 立即执行。
+    setBusyCancel(() => () => { userCancelled = true; ctrl.abort(); });
     try {
-      const latest = await fetchLatest();
-      setBusy(null);
+      const latest = await fetchLatest(ctrl.signal);
       if (!latest.version) throw new Error("malformed latest.json");
       if (compareVersions(latest.version, version) > 0) {
         const go = await modal.confirm({
@@ -130,8 +160,11 @@ export default function App() {
         showToast(t("updateLatest", { v: version || latest.version }));
       }
     } catch {
+      if (!userCancelled) showToast(t("updateFail"), true);
+    } finally {
+      clearTimeout(timer);
       setBusy(null);
-      showToast(t("updateFail"), true);
+      setBusyCancel(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, lang]);
@@ -209,14 +242,26 @@ export default function App() {
 
   useEffect(() => {
     if (!current) return;
-    const id = setTimeout(() => {
-      invoke("save_doc", { path: current, content: md }).catch((e) =>
-        showToast(tr(lang, "errSave", { e: String(e) }), true)
-      );
-    }, 800);
+    pendingSave.current = { path: current, content: md };
+    const id = setTimeout(() => { void flushSave(); }, 800);
     return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [md, current, lang]);
+  }, [md, current, flushSave]);
+
+  // 关窗（标题栏 × 和 Alt+F4 都走 close-requested）前把待落盘的编辑写掉。
+  // 一旦注册了 JS 监听，Rust 侧就会先 prevent_close，所以必须自己 destroy，否则窗口关不掉。
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let disposed = false;
+    win.onCloseRequested(async (event) => {
+      if (!pendingSave.current) return;
+      event.preventDefault();
+      await flushSave();
+      await win.destroy();
+    })
+      .then((f) => { if (disposed) f(); else un = f; })
+      .catch(() => {});
+    return () => { disposed = true; un?.(); };
+  }, [win, flushSave]);
 
   // 工作区变化时重建目录监听
   useEffect(() => {
@@ -374,6 +419,7 @@ export default function App() {
 
   const openDoc = async (n: Node) => {
     try {
+      await flushSave();
       const content = await invoke<string>("read_doc", { path: n.path });
       setCurrent(n.path);
       setMd(content);
@@ -386,6 +432,7 @@ export default function App() {
     try {
       const path = await invoke<string | null>("pick_file");
       if (!path) return;
+      await flushSave();
       const content = await invoke<string>("read_doc", { path });
       setCurrent(path);
       setMd(content);
@@ -396,6 +443,7 @@ export default function App() {
 
   const saveNow = async () => {
     if (!current) return showToast(t("needWorkspace"), true);
+    pendingSave.current = null;
     try {
       await invoke("save_doc", { path: current, content: md });
       showToast(t("saved"));
@@ -438,9 +486,12 @@ export default function App() {
     const name = await modal.prompt({ title: t("renameTitle"), initial: n.name, okText: t("ok"), cancelText: t("cancel") });
     if (!name || name === n.name) return;
     const parent = n.path.replace(/[\\/][^\\/]+$/, "");
-    const finalName = n.is_dir ? name : ensureMd(name);
+    // 文档沿用 ensureMd；图片保住原扩展名，不能被追加 .md（a.png → a.png.md 会同时废掉预览和文中引用）。
+    const finalName = n.is_dir ? name : n.is_image ? keepExt(name, n.name) : ensureMd(name);
     const np = join(parent, finalName);
     try {
+      // 先落盘再改名，否则待写回的旧路径会在改名后被重新创建出来。
+      await flushSave();
       await invoke("rename_path", { old: n.path, new: np });
       if (current === n.path) setCurrent(np);
       await refresh(workspaces);
@@ -460,6 +511,8 @@ export default function App() {
     });
     if (!ok) return;
     try {
+      // 先落盘再删：否则待写回的内容会在删除后把文件重新创建出来。
+      await flushSave();
       await invoke("delete_path", { path: n.path });
       if (current === n.path) {
         setCurrent(null);
@@ -534,6 +587,19 @@ export default function App() {
       return null;
     }
   }, []);
+
+  // 预览里的链接必须交给系统浏览器：不拦截的话 WebView2 会把整个应用窗口导航到该 URL，
+  // 界面直接消失且没有后退入口（Tauri 未注册 on_navigation 时默认放行所有导航）。
+  const onPreviewClick = (e: MouseEvent<HTMLDivElement>) => {
+    const a = (e.target as Element).closest("a");
+    if (!a) return;
+    e.preventDefault();
+    const href = a.getAttribute("href");
+    if (!href) return;
+    invoke("open_external", { url: href }).catch((err) =>
+      showToast(t("errOpenLink", { e: String(err) }), true)
+    );
+  };
 
   const shown = useMemo(() => filterTree(tree, query.trim().toLowerCase()), [tree, query]);
   const rootSet = useMemo(() => new Set(workspaces), [workspaces]);
@@ -774,7 +840,7 @@ export default function App() {
                 </button>
               </div>
               <div ref={previewScrollRef} className={"preview" + (wxDark ? " wx-dark" : "")}>
-                <div className="pv-content" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                <div className="pv-content" onClick={onPreviewClick} onAuxClick={onPreviewClick} dangerouslySetInnerHTML={{ __html: previewHtml }} />
               </div>
             </div>
           )}
@@ -827,6 +893,7 @@ export default function App() {
           <div className="busy-box">
             <div className="busy-bar"><span /></div>
             <div className="busy-label">{busy}</div>
+            {busyCancel && <button className="busy-cancel" onClick={busyCancel}>{t("cancel")}</button>}
           </div>
         </div>
       )}

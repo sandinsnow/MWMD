@@ -321,25 +321,47 @@ fn delete_path(path: String) -> Result<(), String> {
     workspace::delete_path(&path)
 }
 
-/// 在系统默认浏览器打开外部链接（「检查更新 → 打开下载页」）。
-/// 仅放行受限字符集的 https URL；字符集不含任何 cmd/shell 元字符（& | < > ^ % 空格 引号等），
-/// 故经 `cmd /C start` 也杜绝注入。Windows 单平台。
-#[tauri::command]
+/// 在系统默认浏览器打开外部链接（预览区点击链接、「检查更新 → 打开下载页」）。
+/// 只放行 http/https/mailto；用 `ShellExecuteW` 直接交给系统协议处理器，**不经 cmd/shell**，
+/// 因此 URL 里的 `& ? = % #` 等字符既不会被解释成命令，也不需要字符集白名单。
+/// `async` 属性：启动浏览器可能阻塞数百毫秒，不能占住主线程。
+#[tauri::command(async)]
 fn open_external(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let safe = url.starts_with("https://")
-            && url.chars().count() > "https://".chars().count()
-            && url
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-' | '_'));
-        if !safe {
-            return Err("仅允许受限字符集的 https 链接".into());
+        use std::os::windows::ffi::OsStrExt;
+        use winapi::um::shellapi::ShellExecuteW;
+        use winapi::um::winuser::SW_SHOWNORMAL;
+
+        let trimmed = url.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let scheme_ok = lower.starts_with("https://")
+            || lower.starts_with("http://")
+            || lower.starts_with("mailto:");
+        // 控制字符与裸引号一律拒绝：系统把 URL 拼进协议处理器的命令行，引号会破坏其 quoting。
+        // 合法 URL 里两者都必须百分号编码，故不会误伤正常链接。
+        if !scheme_ok || trimmed.chars().any(|c| c.is_ascii_control() || c == '"') {
+            return Err("仅支持 http/https/mailto 链接".into());
         }
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let wide = |s: &str| -> Vec<u16> {
+            std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        };
+        let op = wide("open");
+        let target = wide(trimmed);
+        let rc = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                op.as_ptr(),
+                target.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        // 返回值 >32 表示成功；<=32 是错误码（如 31 = 无关联程序）。
+        if (rc as isize) <= 32 {
+            return Err(format!("打开链接失败（代码 {}）", rc as isize));
+        }
         Ok(())
     }
     #[cfg(not(windows))]
@@ -380,4 +402,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_external;
+
+    /// 只覆盖拒绝分支：合法 URL 会真的拉起系统浏览器，不能在测试里触发。
+    #[test]
+    fn open_external_rejects_non_web_schemes_and_control_chars() {
+        for bad in [
+            "javascript:alert(1)",
+            "JaVaScRiPt:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///C:/Windows/win.ini",
+            "vbscript:msgbox(1)",
+            "//evil.example/a",
+            "https://ok.example/\r\nX-Injected: 1",
+            "https://ok.example/\" -- \"",
+            "cmd.exe /c calc",
+            "   ",
+            "",
+        ] {
+            assert!(open_external(bad.to_string()).is_err(), "should reject: {bad:?}");
+        }
+    }
 }

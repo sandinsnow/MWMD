@@ -53,6 +53,7 @@ const DICT: Record<string, [string, string]> = {
   errAddWs: ["添加工作区失败: {e}", "Failed to add workspace: {e}"],
   errRemove: ["移除失败: {e}", "Remove failed: {e}"],
   errOpen: ["打开失败: {e}", "Open failed: {e}"],
+  errOpenLink: ["打开链接失败: {e}", "Failed to open link: {e}"],
   errSave: ["保存失败: {e}", "Save failed: {e}"],
   errCreateFile: ["创建文件失败: {e}", "Failed to create file: {e}"],
   errCreateFolder: ["创建文件夹失败: {e}", "Failed to create folder: {e}"],

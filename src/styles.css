@@ -363,6 +363,12 @@ button { font-family: inherit; }
   100% { left: 100%; }
 }
 .busy-label { margin-top: 12px; font-size: var(--ui-size); color: var(--text-2); }
+.busy-cancel {
+  margin-top: 14px; padding: 5px 16px; font-size: var(--ui-size);
+  color: var(--text-2); background: transparent;
+  border: 1px solid var(--border-2); border-radius: 7px; cursor: pointer;
+}
+.busy-cancel:hover { color: var(--text); border-color: var(--accent); }
 
 /* ---------- 滚动条 ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

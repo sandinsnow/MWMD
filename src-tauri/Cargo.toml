@@ -21,7 +21,7 @@ syntect = { version = "5", default-features = false, features = ["default-syntax
 rfd = "0.15"
 notify = "6"
 base64 = "0.22"
-winapi = { version = "0.3", features = ["winuser", "winbase", "winnt", "minwindef"] }
+winapi = { version = "0.3", features = ["winuser", "winbase", "winnt", "minwindef", "shellapi"] }
 
 # 静默 PDF 导出：复用系统 WebView2 运行时的 PrintToPdf（仅 Windows，纯离线、不内置浏览器内核）。
 # webview2-com / windows 均为 Tauri 既有传递依赖，版本对齐 0.38 / 0.61，不增加分发体积。
