@@ -55,6 +55,21 @@ interface SearchHit {
   snippet: string;
 }
 
+type DocEncoding = "utf8" | "utf8-bom" | "gbk";
+interface DocStat {
+  mtime_ms: number;
+  len: number;
+}
+// save_doc 的返回：新基线 + 实际写入编码 + 是否因 GBK 不可映射字符提升为 UTF-8。
+interface DocSaveResult extends DocStat {
+  encoding: DocEncoding;
+  promoted: boolean;
+}
+interface DocFile extends DocStat {
+  content: string;
+  encoding: DocEncoding;
+}
+
 export default function App() {
   const [booted, setBooted] = useState(false);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
@@ -62,6 +77,13 @@ export default function App() {
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
   const [current, setCurrent] = useState<string | null>(null);
   const [md, setMd] = useState("");
+  // 磁盘基线：savedMd 是「已知落盘」的正文（派生脏标记），docStat/docEnc 供冲突检测与保真回写。
+  const [savedMd, setSavedMd] = useState("");
+  const [docStat, setDocStat] = useState<DocStat | null>(null);
+  const [docEnc, setDocEnc] = useState<DocEncoding>("utf8");
+  const [conflict, setConflict] = useState(false);
+  // 重新载入同一路径时 Editor 的 key 不变、不会重挂载，靠 epoch 强制重建以丢弃旧视图。
+  const [epoch, setEpoch] = useState(0);
   const [html, setHtml] = useState("");
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"name" | "content">("name");
@@ -102,22 +124,74 @@ export default function App() {
   langRef.current = lang;
   // 防抖窗口内尚未落盘的那一次自动保存。切换文档、重命名/删除当前文件、关窗前都必须先写掉，
   // 否则 effect 的 cleanup 会 clearTimeout，把最后 800ms 内的编辑静默丢弃。
-  const pendingSave = useRef<{ path: string; content: string } | null>(null);
+  const pendingSave = useRef<{ path: string; content: string; encoding: DocEncoding; base: DocStat } | null>(null);
+  // 串行化落盘：所有 flush 调用挂到一条 promise 链上严格排队，既不并发双写，
+  // 也不因「正在保存」而静默放弃（调用方会等到轮到自己、拿到真实结果）。
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  // async 命令可并发返回：用递增序号丢弃慢的旧响应，避免乱序覆盖预览/文件树（同步时代天然有序）。
+  const renderSeqRef = useRef(0);
+  const treeSeqRef = useRef(0);
+  // 关窗守卫要读最新的脏标记；用 ref 避免把 dirty 塞进监听 effect 的依赖里反复重注册。
+  const dirtyRef = useRef(false);
+  // 与 dirty 同步的最新草稿：CodeMirror 更新不经 React 事件系统，从 onChange 到下次 render
+  // 之间若关窗，pendingSave 可能还没建立；close handler 用它兜底构造待写内容，避免丢稿。
+  const draftRef = useRef<{ path: string; content: string; encoding: DocEncoding; base: DocStat } | null>(null);
+  // 最新磁盘基线：保存成功时同步写入，供 saveNow 判定「外部改动」时避开自己刚完成的自动保存。
+  const docStatRef = useRef<DocStat | null>(null);
 
   const showToast = (msg: string, error = false) => {
-    setToast({ msg, error });
+    setToast({ msg: msg, error });
     setTimeout(() => setToast(null), 2600);
   };
 
-  const flushSave = useCallback(async () => {
-    const p = pendingSave.current;
-    if (!p) return;
-    pendingSave.current = null;
-    try {
-      await invoke("save_doc", { path: p.path, content: p.content });
-    } catch (e) {
-      showToast(tr(langRef.current, "errSave", { e: String(e) }), true);
-    }
+  // 落盘待写内容。写前比对磁盘基线：被外部改过则暂停（保留 pending + 冲突条），绝不静默覆盖。
+  // force=true 表示用户已明确选择覆盖。返回 false 表示本次没写（冲突或出错）。
+  // 关键：只有 save_doc 真正成功才清空 pendingSave；stat 冲突或写盘出错一律保留，
+  // 否则关窗守卫看不到待写内容、会把用户的编辑静默丢掉。
+  const flushSave = useCallback((force = false): Promise<boolean> => {
+    // 挂到串行队列尾部：轮到自己时才读取当时的 pendingSave，天然避免并发双写与旧内容覆盖。
+    const job = saveChainRef.current.then(async (): Promise<boolean> => {
+      const p = pendingSave.current;
+      if (!p) return true;
+      try {
+        if (!force) {
+          const st = await invoke<DocStat>("stat_doc", { path: p.path });
+          if (st.mtime_ms !== p.base.mtime_ms || st.len !== p.base.len) {
+            setConflict(true);
+            return false;
+          }
+        }
+        const ns = await invoke<DocSaveResult>("save_doc", { path: p.path, content: p.content, encoding: p.encoding });
+        const freshStat = { mtime_ms: ns.mtime_ms, len: ns.len };
+        // 只清理由本 job 写入的那份快照：save_doc 在飞期间用户可能又打字（onDocChange 把
+        // pendingSave 换成更新的 md_new），若无条件清空会抹掉新快照，随后关窗的 job 读到
+        // 空 pending 直接返回 true -> 窗口销毁 -> md_new 静默丢失。快照已被替换则保留，
+        // 让 autosave effect（savedMd=p.content、md=新内容 -> 脏）重新调度一次新基线的保存。
+        if (pendingSave.current?.content === p.content && pendingSave.current?.path === p.path) {
+          pendingSave.current = null;
+        } else if (pendingSave.current?.path === p.path) {
+          // 存活快照的基线刷新为本次落盘后的真实磁盘状态：否则下一个 job 的 stat_doc
+          // 会把「自己刚写的 md_old」误判成外部改动、弹出无谓的冲突条。
+          // 限定同路径，避免跨文档串基线；job A 之后的外部真实修改 stat 必然不同，仍会被检出。
+          pendingSave.current = { ...pendingSave.current, base: freshStat };
+        }
+        docStatRef.current = freshStat;
+        setSavedMd(p.content);
+        setDocStat(freshStat);
+        setDocEnc(ns.encoding);
+        if (ns.promoted) showToast(tr(langRef.current, "encodedPromoted"));
+        setConflict(false);
+        return true;
+      } catch (e) {
+        // 出错也保留 pendingSave + 拉起冲突条，给用户「重新载入/覆盖保存」的恢复路径。
+        setConflict(true);
+        showToast(tr(langRef.current, "errSave", { e: String(e) }), true);
+        return false;
+      }
+    });
+    // 队列永不拒绝：即使本次 job 抛错也继续向后执行（错误已在 job 内消化）。
+    saveChainRef.current = job.then(() => {}, () => {});
+    return job;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -170,14 +244,18 @@ export default function App() {
   }, [version, lang]);
 
   const refresh = useCallback(async (roots: string[]) => {
+    const seq = ++treeSeqRef.current;
     if (roots.length === 0) {
       setTree([]);
       return;
     }
     try {
       const tr2 = await invoke<Node[]>("list_tree", { roots });
+      // async 命令可并发：丢弃过期响应，避免慢的旧扫描覆盖新的文件树。
+      if (seq !== treeSeqRef.current) return;
       setTree(tr2);
     } catch (e) {
+      if (seq !== treeSeqRef.current) return;
       showToast(tr(lang, "errListTree", { e: String(e) }), true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -234,28 +312,41 @@ export default function App() {
   }, [draft, theme, customThemes]);
 
   useEffect(() => {
+    const seq = ++renderSeqRef.current;
     const id = setTimeout(() => {
-      invoke<string>("render_markdown", { md, theme, params, spec: activeSpec }).then(setHtml).catch(() => {});
+      invoke<string>("render_markdown", { md, theme, params, spec: activeSpec })
+        .then((res) => { if (seq === renderSeqRef.current) setHtml(res); })
+        .catch(() => {});
     }, 150);
     return () => clearTimeout(id);
   }, [md, theme, params, activeSpec]);
 
+  // 只在「确实脏了」时调度自动保存：打开文档不再产生一次冗余写盘。
+  // 冲突期间不调度，等用户在冲突条上选择，避免每 800ms 空转一次 stat。
   useEffect(() => {
-    if (!current) return;
-    pendingSave.current = { path: current, content: md };
+    if (!current || !docStat || conflict || md === savedMd) return;
+    pendingSave.current = { path: current, content: md, encoding: docEnc, base: docStat };
     const id = setTimeout(() => { void flushSave(); }, 800);
     return () => clearTimeout(id);
-  }, [md, current, flushSave]);
+  }, [md, current, savedMd, docStat, docEnc, conflict, flushSave]);
 
   // 关窗（标题栏 × 和 Alt+F4 都走 close-requested）前把待落盘的编辑写掉。
   // 一旦注册了 JS 监听，Rust 侧就会先 prevent_close，所以必须自己 destroy，否则窗口关不掉。
+  // 冲突未解决时不 destroy：宁可留着窗口，也不能把未落盘的编辑关掉丢死。
   useEffect(() => {
     let un: (() => void) | undefined;
     let disposed = false;
     win.onCloseRequested(async (event) => {
-      if (!pendingSave.current) return;
+      // dirty 也算：编辑刚发生、pending 尚未建立的极短窗口内也不能放行。
+      if (!dirtyRef.current && !pendingSave.current) return;
       event.preventDefault();
-      await flushSave();
+      // 时间窗兜底：dirtyRef 已置位但 autosave effect 尚未把 pending 建立时，
+      // 用与 dirty 同步的草稿快照构造 pendingSave，避免 flushSave 见空直接返回而丢稿。
+      if (dirtyRef.current && !pendingSave.current && draftRef.current) {
+        pendingSave.current = draftRef.current;
+      }
+      // flush 失败（冲突/写盘错误）时保持窗口不销毁，让用户用冲突条处理。
+      if (!(await flushSave())) return;
       await win.destroy();
     })
       .then((f) => { if (disposed) f(); else un = f; })
@@ -402,6 +493,8 @@ export default function App() {
       danger: true,
     });
     if (!ok) return;
+    // 清理当前文档状态前先把待写内容落盘，失败则中止（保留窗口与冲突条供恢复）。
+    if (!(await flushSave())) return;
     try {
       await invoke("remove_workspace", { path });
       const next = workspaces.filter((w) => w !== path);
@@ -410,6 +503,10 @@ export default function App() {
       if (current && current.startsWith(path)) {
         setCurrent(null);
         setMd("");
+        setSavedMd("");
+        setDocStat(null);
+        docStatRef.current = null;
+        setConflict(false);
       }
       await refresh(next);
     } catch (e) {
@@ -417,12 +514,26 @@ export default function App() {
     }
   };
 
+  const adopt = (path: string, d: DocFile) => {
+    pendingSave.current = null;
+    const st = { mtime_ms: d.mtime_ms, len: d.len };
+    docStatRef.current = st;
+    setCurrent(path);
+    setMd(d.content);
+    setSavedMd(d.content);
+    setDocEnc(d.encoding);
+    setDocStat(st);
+    setConflict(false);
+    // 统一在这里递增：Editor 的 key 是 `${path}#${epoch}`，重开当前文件也会重建并加载新内容。
+    setEpoch((e) => e + 1);
+  };
+
   const openDoc = async (n: Node) => {
     try {
-      await flushSave();
-      const content = await invoke<string>("read_doc", { path: n.path });
-      setCurrent(n.path);
-      setMd(content);
+      // 旧文档若处于冲突未决，flush 会返回 false：先让用户处理，不能把它的编辑切丢。
+      if (!(await flushSave())) return;
+      const d = await invoke<DocFile>("read_doc", { path: n.path });
+      adopt(n.path, d);
     } catch (e) {
       showToast(t("errOpen", { e: String(e) }), true);
     }
@@ -432,24 +543,64 @@ export default function App() {
     try {
       const path = await invoke<string | null>("pick_file");
       if (!path) return;
-      await flushSave();
-      const content = await invoke<string>("read_doc", { path });
-      setCurrent(path);
-      setMd(content);
+      if (!(await flushSave())) return;
+      const d = await invoke<DocFile>("read_doc", { path });
+      adopt(path, d);
     } catch (e) {
       showToast(t("errOpen", { e: String(e) }), true);
     }
   };
 
-  const saveNow = async () => {
-    if (!current) return showToast(t("needWorkspace"), true);
-    pendingSave.current = null;
+  // 冲突条「重新载入」：丢弃内存编辑、以磁盘为准（用户明确点击，非静默）。
+  const reloadCurrent = async () => {
+    if (!current) return;
     try {
-      await invoke("save_doc", { path: current, content: md });
-      showToast(t("saved"));
+      const d = await invoke<DocFile>("read_doc", { path: current });
+      adopt(current, d); // adopt 已递增 epoch，避免双增导致重复重建
     } catch (e) {
-      showToast(t("errSave", { e: String(e) }), true);
+      showToast(t("errOpen", { e: String(e) }), true);
     }
+  };
+
+  // 冲突后强制覆盖：先把 pendingSave 重置为「当前编辑器里的最新内容 + 最新基线」，
+  // 否则 pending 还是冲突发生时的旧快照，会把冲突期间新打的字漏掉。
+  const overwriteNow = async () => {
+    if (!current || !docStat) return;
+    pendingSave.current = { path: current, content: md, encoding: docEnc, base: docStat };
+    if (await flushSave(true)) showToast(t("saved"));
+  };
+
+  const saveNow = async () => {
+    if (!current || !docStat) return showToast(t("needWorkspace"), true);
+    // 先把当前编辑器内容装进 pending，再走「带磁盘基线比对」的正常保存路径。
+    // 绝不能像以前那样直接 force：外部刚改完文件、800ms 自动保存尚未触发的窗口里，
+    // conflict 仍是 false，force 会静默覆盖外部修改，违反「绝不静默覆盖」的设计。
+    pendingSave.current = { path: current, content: md, encoding: docEnc, base: docStat };
+    if (await flushSave(false)) {
+      showToast(t("saved"));
+      return;
+    }
+    // 保存失败：用实时 stat_doc 与最新基线比对，区分「外部修改冲突」和「写盘出错」。
+    // 用 docStatRef（保存成功会同步更新）而非闭包里的 docStat：若刚才有自动保存完成，
+    // 用它可避免把「自己的写入」误判成外部冲突。也不读 conflict（异步后可能是旧值）。
+    const base = docStatRef.current ?? docStat;
+    let changedExternally = false;
+    try {
+      const st = await invoke<DocStat>("stat_doc", { path: current });
+      changedExternally = st.mtime_ms !== base.mtime_ms || st.len !== base.len;
+    } catch {
+      // stat 失败不弹覆盖确认；错误 toast 已由 flushSave 给出。
+    }
+    if (!changedExternally) return;
+    const go = await modal.confirm({
+      title: t("conflictOverwrite"),
+      message: t("conflictAsk"),
+      okText: t("conflictOverwrite"),
+      cancelText: t("cancel"),
+      danger: true,
+    });
+    if (!go) return;
+    await overwriteNow();
   };
 
   const newFile = async () => {
@@ -491,7 +642,7 @@ export default function App() {
     const np = join(parent, finalName);
     try {
       // 先落盘再改名，否则待写回的旧路径会在改名后被重新创建出来。
-      await flushSave();
+      if (!(await flushSave())) return;
       await invoke("rename_path", { old: n.path, new: np });
       if (current === n.path) setCurrent(np);
       await refresh(workspaces);
@@ -512,11 +663,15 @@ export default function App() {
     if (!ok) return;
     try {
       // 先落盘再删：否则待写回的内容会在删除后把文件重新创建出来。
-      await flushSave();
+      if (!(await flushSave())) return;
       await invoke("delete_path", { path: n.path });
       if (current === n.path) {
         setCurrent(null);
         setMd("");
+        setSavedMd("");
+        setDocStat(null);
+        docStatRef.current = null;
+        setConflict(false);
       }
       await refresh(workspaces);
       showToast(t("deleted", { name: n.name }));
@@ -663,6 +818,24 @@ export default function App() {
     };
   }, [current, previewCollapsed]);
 
+  const dirty = current !== null && md !== savedMd;
+  dirtyRef.current = dirty;
+  // 每次渲染同步草稿快照（dirty 时才有意义）；close handler 经 ref 读取，不捕获旧 state。
+  draftRef.current = dirty && current && docStat
+    ? { path: current, content: md, encoding: docEnc, base: docStat }
+    : null;
+
+  // 同步兜底：CodeMirror 的更新不经 React 事件系统，从 onChange 到下次 render 更新 dirtyRef
+  // 之间存在时间窗；用户此刻关窗会读到旧 dirtyRef=false 而放行、丢掉刚打的字。
+  // onChange 里同步写 dirtyRef 与 pendingSave，配合 autosave effect 形成双保险。
+  const onDocChange = (v: string) => {
+    if (current && docStat) {
+      dirtyRef.current = true;
+      pendingSave.current = { path: current, content: v, encoding: docEnc, base: docStat };
+    }
+    setMd(v);
+  };
+
   return (
     <div className="app">
       <header className="titlebar">
@@ -696,6 +869,14 @@ export default function App() {
           onCheckUpdate={checkUpdate}
           onAbout={() => setAboutOpen(true)}
         />
+
+        {conflict && (
+          <div className="conflict-bar">
+            <span>{t("conflictMsg")}</span>
+            <button className="ghost" onClick={reloadCurrent}>{t("conflictReload")}</button>
+            <button className="danger" onClick={() => void overwriteNow()}>{t("conflictOverwrite")}</button>
+          </div>
+        )}
 
         <div className="drag" data-tauri-drag-region onDoubleClick={() => win.toggleMaximize()} />
         <div className="tools">
@@ -805,14 +986,15 @@ export default function App() {
 
         <section className="split">
           <Editor
-            key={current ?? "untitled"}
+            key={`${current ?? "untitled"}#${epoch}`}
             initial={md}
             lang={lang}
             appearance={resolvedTheme}
             params={params}
             onParams={changeParams}
             pickImage={pickImage}
-            onChange={setMd}
+            onChange={onDocChange}
+            dirty={dirty}
             scrollElementRef={editorScrollRef}
           />
           {previewCollapsed ? (

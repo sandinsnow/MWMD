@@ -51,6 +51,49 @@ pub struct Prefs {
 /// 持有目录监听器；workspaces 变化时整体重建（替换即停止旧监听）。
 struct WatcherState(Mutex<Option<notify::RecommendedWatcher>>);
 
+/// 最近由本进程写过的路径。监听器收到「全是自写」的事件时不再发 fs-changed，
+/// 否则每次自动保存都会触发一次全工作区递归重扫（打字时尤其浪费）。
+struct SelfWrites(std::sync::Arc<Mutex<std::collections::HashMap<String, std::time::Instant>>>);
+
+const SELF_WRITE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// 规范化路径用于「自写抑制」比对：Windows 下 JS 侧与 notify 事件侧的路径可能
+/// 一个是 `\\?\` 长路径前缀、一个是普通盘符，分隔符/大小写也可能不同；不统一
+/// 会导致抑制失效，每次保存仍触发全工作区重扫。
+fn normalize_path(p: &str) -> String {
+    let mut s = p.trim().replace('/', "\\");
+    if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        s = rest.to_string();
+        // UNC 长路径：\\?\UNC\server\share → \\server\share
+        if let Some(rest2) = s.strip_prefix("UNC\\") {
+            s = format!("\\\\{}", rest2);
+        }
+    }
+    s.to_lowercase()
+}
+
+fn mark_self_write(state: &SelfWrites, paths: &[&str]) {
+    let mut m = state.0.lock().unwrap();
+    let now = std::time::Instant::now();
+    m.retain(|_, t| now.duration_since(*t) < SELF_WRITE_TTL);
+    for p in paths {
+        m.insert(normalize_path(p), now);
+    }
+}
+
+/// 事件路径是否全部可归因于本进程刚刚的写（含原子写的隐藏临时文件）。
+fn all_self_written(m: &std::collections::HashMap<String, std::time::Instant>, paths: &[String]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    paths.iter().all(|p| {
+        let norm = normalize_path(p);
+        let name = Path::new(&norm).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        name.starts_with(workspace::TMP_PREFIX)
+            || m.get(&norm).map(|t| t.elapsed() < SELF_WRITE_TTL).unwrap_or(false)
+    })
+}
+
 fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -77,7 +120,8 @@ fn resolve_theme(theme: &str, spec: &Option<render::ThemeSpec>, params: &render:
     }
 }
 
-#[tauri::command]
+/// CPU 密集（pulldown-cmark + syntect），离开主线程避免打字时界面卡顿。
+#[tauri::command(async)]
 fn render_markdown(md: String, theme: String, params: render::ThemeParams, spec: Option<render::ThemeSpec>) -> String {
     render::render_markdown(&md, &resolve_theme(&theme, &spec, &params))
 }
@@ -214,11 +258,20 @@ fn save_prefs(app: tauri::AppHandle, prefs: Prefs) -> Result<(), String> {
 
 /// 为一组工作区根重建目录监听；任何变化通过 `fs-changed` 事件通知前端刷新树。
 #[tauri::command]
-fn watch_workspaces(app: tauri::AppHandle, state: State<WatcherState>, roots: Vec<String>) -> Result<(), String> {
+fn watch_workspaces(app: tauri::AppHandle, state: State<WatcherState>, self_writes: State<SelfWrites>, roots: Vec<String>) -> Result<(), String> {
     use notify::{RecursiveMode, Watcher};
+    // 重建监听时顺手清理上次崩溃残留的原子写临时文件（超过 10 分钟才删，避免误删在写文件）。
+    workspace::clean_stale_tmps(&roots);
     let emitter = app.clone();
+    let writes = self_writes.0.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if res.is_ok() {
+        if let Ok(ev) = res {
+            let paths: Vec<String> = ev.paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+            let m = writes.lock().unwrap();
+            if all_self_written(&m, &paths) {
+                return;
+            }
+            drop(m);
             let _ = emitter.emit("fs-changed", ());
         }
     })
@@ -254,7 +307,8 @@ fn remove_workspace(app: tauri::AppHandle, path: String) -> Result<(), String> {
     save_config(&app, &c)
 }
 
-#[tauri::command]
+/// 递归扫盘可能较慢（大工作区），离开主线程。
+#[tauri::command(async)]
 fn list_tree(roots: Vec<String>) -> Vec<Node> {
     roots
         .iter()
@@ -291,33 +345,45 @@ async fn read_image(path: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-fn read_doc(path: String) -> Result<String, String> {
+/// 读文档：返回正文 + 探测出的编码 + 磁盘基线（mtime/len），供冲突检测与保真回写。
+#[tauri::command(async)]
+fn read_doc(path: String) -> Result<workspace::DocFile, String> {
     workspace::read_doc(&path)
 }
 
-#[tauri::command]
-fn save_doc(path: String, content: String) -> Result<(), String> {
-    workspace::save_doc(&path, &content)
+/// 写前基线比对：与载入/上次保存时的基线不一致即说明文件被外部改过。
+#[tauri::command(async)]
+fn stat_doc(path: String) -> Result<workspace::DocStat, String> {
+    workspace::stat(&path)
 }
 
-#[tauri::command]
-fn create_doc(path: String) -> Result<(), String> {
+#[tauri::command(async)]
+fn save_doc(path: String, content: String, encoding: workspace::Encoding, self_writes: State<SelfWrites>) -> Result<workspace::DocSaveResult, String> {
+    mark_self_write(&self_writes, &[&path]);
+    workspace::save_doc(&path, &content, encoding)
+}
+
+#[tauri::command(async)]
+fn create_doc(path: String, self_writes: State<SelfWrites>) -> Result<(), String> {
+    mark_self_write(&self_writes, &[&path]);
     workspace::create_doc(&path)
 }
 
-#[tauri::command]
-fn create_dir(path: String) -> Result<(), String> {
+#[tauri::command(async)]
+fn create_dir(path: String, self_writes: State<SelfWrites>) -> Result<(), String> {
+    mark_self_write(&self_writes, &[&path]);
     workspace::create_dir(&path)
 }
 
-#[tauri::command]
-fn rename_path(old: String, new: String) -> Result<(), String> {
+#[tauri::command(async)]
+fn rename_path(old: String, new: String, self_writes: State<SelfWrites>) -> Result<(), String> {
+    mark_self_write(&self_writes, &[&old, &new]);
     workspace::rename_path(&old, &new)
 }
 
-#[tauri::command]
-fn delete_path(path: String) -> Result<(), String> {
+#[tauri::command(async)]
+fn delete_path(path: String, self_writes: State<SelfWrites>) -> Result<(), String> {
+    mark_self_write(&self_writes, &[&path]);
     workspace::delete_path(&path)
 }
 
@@ -375,6 +441,7 @@ fn open_external(url: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(WatcherState(Mutex::new(None)))
+        .manage(SelfWrites(std::sync::Arc::new(Mutex::new(std::collections::HashMap::new()))))
         .invoke_handler(tauri::generate_handler![
             render_markdown,
             copy_html,
@@ -393,6 +460,7 @@ pub fn run() {
             search_content,
             read_image,
             read_doc,
+            stat_doc,
             save_doc,
             create_doc,
             create_dir,
@@ -407,6 +475,37 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::open_external;
+
+    #[test]
+    fn self_write_suppression_only_covers_own_recent_writes() {
+        use super::{all_self_written, mark_self_write, SelfWrites};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        let state = SelfWrites(Arc::new(Mutex::new(HashMap::new())));
+        mark_self_write(&state, &["C:\\ws\\a.md"]);
+        let m = state.0.lock().unwrap();
+        // 自己的写 + 原子写临时文件 → 抑制
+        assert!(all_self_written(&m, &["C:\\ws\\a.md".into()]));
+        assert!(all_self_written(&m, &["C:\\ws\\a.md".into(), "C:\\ws\\.mwmd-tmp-a.md-123".into()]));
+        // 混入外部路径 → 不抑制；空事件 → 不抑制（保守刷新）
+        assert!(!all_self_written(&m, &["C:\\ws\\a.md".into(), "C:\\ws\\b.md".into()]));
+        assert!(!all_self_written(&m, &[]));
+    }
+
+    #[test]
+    fn self_write_suppression_normalizes_windows_paths() {
+        use super::{all_self_written, mark_self_write, normalize_path, SelfWrites};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        let state = SelfWrites(Arc::new(Mutex::new(HashMap::new())));
+        // 写入侧是 JS 传来的 `\\?\` 长路径 + 正斜杠 + 混合大小写。
+        mark_self_write(&state, &["\\\\?\\C:/WS/Note.MD"]);
+        let m = state.0.lock().unwrap();
+        // 事件侧是 notify 传来的普通盘符路径：规范化后必须命中。
+        assert!(all_self_written(&m, &["c:\\ws\\note.md".into()]));
+        assert_eq!(normalize_path("\\\\?\\C:/WS/Note.MD"), "c:\\ws\\note.md");
+        assert_eq!(normalize_path("\\\\?\\UNC\\Server\\Share\\A.MD"), "\\\\server\\share\\a.md");
+    }
 
     /// 只覆盖拒绝分支：合法 URL 会真的拉起系统浏览器，不能在测试里触发。
     #[test]

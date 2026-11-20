@@ -20,6 +20,7 @@ interface Props {
   onParams: (patch: Partial<ThemeParams>) => void;
   pickImage: () => Promise<string | null>;
   onChange: (v: string) => void;
+  dirty?: boolean;
   // 供父组件做「编辑器 ⇄ 预览」联动滚动：挂载后写入 CodeMirror 的滚动容器（.cm-scroller）。
   scrollElementRef?: { current: HTMLElement | null };
 }
@@ -154,7 +155,7 @@ const darkTheme = EditorView.theme({
   ".cm-cursor": { borderLeftColor: "var(--accent, #4d8ef0)" },
 });
 
-export default function Editor({ initial, lang, appearance, params, onParams, pickImage, onChange, scrollElementRef }: Props) {
+export default function Editor({ initial, lang, appearance, params, onParams, pickImage, onChange, scrollElementRef, dirty }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeComp = useRef(new Compartment());
@@ -232,6 +233,7 @@ export default function Editor({ initial, lang, appearance, params, onParams, pi
     <div className={"editor-wrap" + (appearance === "dark" ? " dark" : "")}>
       <div className="pane-head">
         <span>{tr(lang, "paneEditor")}</span>
+        {dirty && <span className="dirty-dot" title={tr(lang, "dirtyHint")} />}
       </div>
       <div className="toolbar">
         {/* 行内文字样式 */}

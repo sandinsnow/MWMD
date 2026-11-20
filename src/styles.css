@@ -67,6 +67,27 @@ button { font-family: inherit; }
 .tb-brand { display: flex; align-items: center; height: 100%; padding: 0 6px 0 12px; }
 .appicon { display: block; width: 22px; height: 22px; }
 .titlebar .drag { flex: 1; height: 100%; }
+/* 外部修改冲突条：自动保存暂停期间的显式抉择入口，绝不静默覆盖 */
+.conflict-bar {
+  display: flex; align-items: center; gap: 8px; margin: 0 8px; padding: 4px 10px;
+  border: 1px solid #e5484d; border-radius: 7px; background: rgba(229, 72, 77, .10);
+  font-size: calc(var(--ui-size) - 1px); color: var(--text); max-width: 46vw;
+}
+.conflict-bar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conflict-bar button {
+  flex: 0 0 auto; border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 10px;
+  font-size: calc(var(--ui-size) - 1px); line-height: 1.5; cursor: pointer;
+  background: var(--panel); color: var(--text-2);
+}
+/* 浅/深主题兜底：两颗按钮都用主题前景色，danger 用实心红底白字，确保一眼可辨。 */
+.conflict-bar button.ghost { color: var(--text); font-weight: 600; }
+.conflict-bar button:hover { background: var(--hover); }
+.conflict-bar button.danger {
+  background: #e5484d; border-color: #e5484d; color: #fff; font-weight: 700;
+}
+.conflict-bar button.danger:hover { background: #d33c41; }
+.conflict-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dirty-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; flex: 0 0 auto; }
 .tools { display: flex; gap: 8px; padding-right: 10px; align-items: center; }
 .copy-btn {
   display: inline-flex; align-items: center; gap: 6px;
