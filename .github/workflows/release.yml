@@ -28,6 +28,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 必须全量克隆：浅克隆会把附注标签剥成它指向的提交，
+          # 下面 `git tag -l --format='%(contents)'` 就会取到 commit message 而不是标签附注（发布说明）。
+          fetch-depth: 0
 
       - name: Resolve tag
         id: tag
@@ -85,9 +89,12 @@ jobs:
           URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${APP_NAME}.exe"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          # 用 tag 附注（若有）作为更新说明，回退为标签名
+          # 用 tag 附注（若有）作为发布说明，回退为标签名
           NOTES=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "$TAG")
           [ -z "$NOTES" ] && NOTES="$TAG"
+          # 同一份说明既写进 latest.json，也作为 GitHub Release 正文（body_path）。
+          # 不用 generate_release_notes：它只会生成一句 Full Changelog 链接，把附注里的用户向清单丢掉。
+          printf '%s\n' "$NOTES" > "$OUT/release-notes.md"
 
           # 生成 latest.json（自替换更新器读取：版本比对 + 下载地址 + 校验和）
           NOTES="$NOTES" URL="$URL" SHA="$SHA" VERSION="$VERSION" PUB_DATE="$PUB_DATE" \
@@ -101,7 +108,7 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ env.APP_NAME }} ${{ steps.tag.outputs.tag }}
-          generate_release_notes: true
+          body_path: dist-release/release-notes.md
           files: |
             dist-release/${{ env.APP_NAME }}.exe
             dist-release/${{ env.APP_NAME }}.exe.sha256
